@@ -13,6 +13,7 @@ use pixelflut::pixmap::Pixmap;
 mod cli;
 #[cfg(feature = "gui")]
 mod gui;
+mod differential_state;
 
 #[tokio::main]
 async fn main() {

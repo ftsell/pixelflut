@@ -959,6 +959,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
+
+[[package]]
 name = "nom"
 version = "6.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1127,6 +1133,7 @@ dependencies = [
  "lazy_static",
  "libadwaita",
  "log",
+ "nohash-hasher",
  "nom",
  "once_cell",
  "pretty_env_logger",
