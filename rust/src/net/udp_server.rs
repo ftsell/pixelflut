@@ -1,19 +1,16 @@
-//!
 //! Server for handling the pixelflut protocol over connectionless UDP datagrams
-//!
 
+use actix::fut::wrap_future;
+use actix::{Actor, Addr, AsyncContext, Context};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use bytes::{Buf, BytesMut};
 use tokio::net::UdpSocket;
-use tokio::select;
-use tokio::sync::Notify;
-use tokio::task::JoinHandle;
 
 use crate::net::framing::Frame;
-use crate::pixmap::{Pixmap, SharedPixmap};
-use crate::state_encoding::SharedMultiEncodings;
+use crate::pixmap::pixmap_actor::PixmapActor;
+use crate::pixmap::Pixmap;
 
 static LOG_TARGET: &str = "pixelflut.net.udp";
 
@@ -32,102 +29,80 @@ impl Default for UdpOptions {
     }
 }
 
-/// Start the udp server on a new task
-///
-/// This binds to the socket address specified via *options* with UDP and
-/// uses the provided *pixmap* as pixel data storage and *encodings* for reading cached state command results.
-///
-/// It returns a JoinHandle to the task that is executing the server logic as well as a Notify
-/// instance that can be used to stop the server.
-pub fn start_listener<P>(
-    pixmap: SharedPixmap<P>,
-    encodings: SharedMultiEncodings,
+#[derive(Debug, Clone)]
+pub struct UdpServer<P: Pixmap + Unpin + 'static> {
     options: UdpOptions,
-) -> (JoinHandle<tokio::io::Result<()>>, Arc<Notify>)
-where
-    P: Pixmap + Send + Sync + 'static,
-{
-    let notify = Arc::new(Notify::new());
-    let notify2 = notify.clone();
-    let handle = tokio::spawn(async move { listen(pixmap, encodings, options, notify2).await });
-
-    (handle, notify)
+    pixmap_addr: Addr<PixmapActor<P>>,
 }
 
-/// Listen on the udp port defined through *options* while using the given *pixmap* and *encodings*
-/// as backing data storage
-pub async fn listen<P>(
-    pixmap: SharedPixmap<P>,
-    encodings: SharedMultiEncodings,
-    options: UdpOptions,
-    notify_stop: Arc<Notify>,
-) -> tokio::io::Result<()>
-where
-    P: Pixmap + Send + Sync + 'static,
-{
-    let socket = Arc::new(UdpSocket::bind(options.listen_address).await?);
-    info!(
-        target: LOG_TARGET,
-        "Started udp listener on {}",
-        socket.local_addr().unwrap()
-    );
+impl<P: Pixmap + Unpin + 'static> UdpServer<P> {
+    pub fn new(options: UdpOptions, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
+        Self { options, pixmap_addr }
+    }
 
-    loop {
-        let socket = socket.clone();
-        let pixmap = pixmap.clone();
-        let encodings = encodings.clone();
-        let mut buffer = BytesMut::with_capacity(1024);
+    /// Listen on the udp port defined through *options* while using the given *pixmap* and *encodings*
+    /// as backing data storage
+    pub async fn listen(&self, ctx: &mut <Self as Actor>::Context) -> tokio::io::Result<()> {
+        let socket = Arc::new(UdpSocket::bind(self.options.listen_address).await?);
+        info!("Started udp listener on {}", socket.local_addr().unwrap());
 
-        select! {
-            res = socket.recv_from(&mut buffer[..]) => {
-                let (_num_read, origin) = res?;
-                tokio::spawn(async move {
-                    process_received(buffer, origin, socket, pixmap, encodings).await;
-                });
-            },
-            _ = notify_stop.notified() => {
-                log::info!("Stopping udp server on {}", socket.local_addr().unwrap());
-                break Ok(());
-            }
+        loop {
+            let pixmap_addr = self.pixmap_addr.clone();
+            let socket = socket.clone();
+            let mut buffer = BytesMut::with_capacity(1024);
+
+            let res = socket.recv_from(&mut buffer[..]).await;
+            let (_num_read, origin) = res?;
+
+            ctx.spawn(wrap_future(async move {
+                UdpServer::process_received(pixmap_addr, buffer, origin, socket).await;
+            }));
         }
     }
-}
 
-async fn process_received<P, B>(
-    mut buffer: B,
-    origin: SocketAddr,
-    socket: Arc<UdpSocket>,
-    pixmap: SharedPixmap<P>,
-    encodings: SharedMultiEncodings,
-) where
-    P: Pixmap,
-    B: Buf + Clone,
-{
-    // extract frames from received package
-    while buffer.has_remaining() {
-        match Frame::from_input(buffer.clone()) {
-            Err(_) => return,
-            Ok((frame, length)) => {
-                buffer.advance(length);
+    async fn process_received<B: Buf + Clone>(
+        pixmap_addr: Addr<PixmapActor<P>>,
+        mut buffer: B,
+        origin: SocketAddr,
+        socket: Arc<UdpSocket>,
+    ) {
+        // extract frames from received package
+        while buffer.has_remaining() {
+            match Frame::from_input(buffer.clone()) {
+                Err(_) => return,
+                Ok((frame, length)) => {
+                    buffer.advance(length);
 
-                // handle the frame
-                match super::handle_frame(frame, &pixmap, &encodings) {
-                    None => {}
-                    Some(response) => {
-                        // send back a response
-                        match socket
-                            .send_to(&response.encode(), origin) // TODO Find a cleaner way to convert frame to &[u8]
-                            .await
-                        {
-                            Err(e) => {
-                                warn!(target: LOG_TARGET, "Error writing frame: {}", e);
-                                return;
+                    // handle the frame
+                    match super::handle_frame(frame, &pixmap_addr).await {
+                        None => {}
+                        Some(response) => {
+                            // send back a response
+                            match socket
+                                .send_to(&response.encode(), origin) // TODO Find a cleaner way to convert frame to &[u8]
+                                .await
+                            {
+                                Err(e) => {
+                                    warn!(target: LOG_TARGET, "Error writing frame: {}", e);
+                                    return;
+                                }
+                                Ok(_) => {}
                             }
-                            Ok(_) => {}
                         }
                     }
                 }
             }
         }
+    }
+}
+
+impl<P: Pixmap + Unpin + 'static> Actor for UdpServer<P> {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.spawn(wrap_future(async {
+            self.listen(ctx).await.unwrap();
+            ()
+        }));
     }
 }
