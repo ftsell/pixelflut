@@ -21,6 +21,7 @@ pub mod gdk_pixbuf_pixmap;
 mod in_memory_pixmap;
 #[cfg(feature = "gui")]
 pub mod paintable_pixmap;
+pub mod pixmap_actor;
 mod remote_pixmap;
 mod replicating_pixmap;
 
