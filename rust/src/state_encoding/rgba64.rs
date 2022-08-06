@@ -10,81 +10,38 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, Duration};
 
-use crate::pixmap::{Pixmap, SharedPixmap};
+use super::Encoder;
+use crate::pixmap::{Color, Pixmap, SharedPixmap};
 
-use super::SharedMultiEncodings;
+pub struct Rgba64Encoder {}
 
-static LOG_TARGET: &str = "pixelflut.encoder.rgba64";
-
-/// *RGBA64* encoded pixmap canvas data
-pub type Encoding = String;
-
-/// Start the *RGBA64* encoding algorithm on a new task.
-///
-/// Effectively, this periodically re-encodes the provided *pixmap*'s data into the given
-/// *encodings* storage in the background.
-pub fn start_encoder<P>(
-    encodings: SharedMultiEncodings,
-    pixmap: SharedPixmap<P>,
-) -> (JoinHandle<()>, Arc<Notify>)
-where
-    P: Pixmap + Send + Sync + 'static,
-{
-    let notify = Arc::new(Notify::new());
-    let notify2 = notify.clone();
-    let handle = tokio::spawn(async move { run_encoder(encodings, pixmap, notify2).await });
-
-    (handle, notify)
+impl Default for Rgba64Encoder {
+    fn default() -> Self {
+        Self {}
+    }
 }
 
-/// Run the *RGBA64* encoding algorithm in a loop.
-///
-/// Effectively, this periodically re-encodes the provided *pixmap*'s data into the given
-/// *encodings* storage.
-pub async fn run_encoder<P>(
-    encodings: SharedMultiEncodings,
-    pixmap: SharedPixmap<P>,
-    notify_stop: Arc<Notify>,
-) where
-    P: Pixmap,
-{
-    info!(target: LOG_TARGET, "Starting rgba64 encoder");
+impl Encoder for Rgba64Encoder {
+    type Storage = String;
 
-    let mut timer = interval(Duration::from_millis(100));
-    loop {
-        select! {
-            _ = timer.tick() => {
-                let encoding = encode(&pixmap);
-                {
-                    let mut lock = encodings.rgba64.lock().unwrap();
-                    (*lock) = encoding;
-                }
-            },
-            _ = notify_stop.notified() => {
-                log::info!("Stopping rgba64 encoder");
-                break
-            }
+    fn encode(pixmap_width: usize, pixmap_height: usize, pixmap_data: &[Color]) -> Self::Storage {
+        let mut result_data = Vec::with_capacity(pixmap_width * pixmap_height * 4);
+
+        for i in pixmap_data {
+            let i: u32 = i.into();
+            let color = i.to_le_bytes();
+            result_data.push(color[0]);
+            result_data.push(color[1]);
+            result_data.push(color[2]);
+            result_data.push(255);
         }
-    }
-}
 
-fn encode<P>(pixmap: &SharedPixmap<P>) -> Encoding
-where
-    P: Pixmap,
-{
-    // TODO Improve this by mapping the AtomicU32 types to byte slices and then use those directly
-    let mut data = Vec::with_capacity(pixmap.get_size().unwrap().0 * pixmap.get_size().unwrap().1 * 4);
-
-    for i in pixmap.get_raw_data().unwrap() {
-        let i: u32 = i.into();
-        let color = i.to_le_bytes();
-        data.push(color[0]);
-        data.push(color[1]);
-        data.push(color[2]);
-        data.push(255);
+        base64::encode(&result_data)
     }
 
-    base64::encode(&data)
+    fn decode(_data: &Self::Storage) -> anyhow::Result<Vec<Color>> {
+        todo!()
+    }
 }
 
 #[cfg(test)]

@@ -5,104 +5,52 @@
 //!
 
 use anyhow::Result;
-use std::sync::Arc;
-use tokio::select;
-use tokio::sync::Notify;
-use tokio::task::JoinHandle;
-use tokio::time::{interval, Duration};
 
-use crate::pixmap::{Color, Pixmap, SharedPixmap};
+use crate::pixmap::Color;
+use crate::state_encoding::Encoder;
 
-use super::SharedMultiEncodings;
+pub struct Rgb64Encoder {}
 
-static LOG_TARGET: &str = "pixelflut.encoder.rgb64";
-
-/// *RGB64* encoded pixmap canvas data
-pub type Encoding = String;
-
-/// Start the *RGB64* encoding algorithm on a new task.
-///
-/// Effectively, this periodically re-encodes the provided *pixmap*'s data into the given
-/// *encodings* storage in the background.
-pub fn start_encoder<P>(
-    encodings: SharedMultiEncodings,
-    pixmap: SharedPixmap<P>,
-) -> (JoinHandle<()>, Arc<Notify>)
-where
-    P: Pixmap + Send + Sync + 'static,
-{
-    let notify = Arc::new(Notify::new());
-    let notify2 = notify.clone();
-    let handle = tokio::spawn(async move { run_encoder(encodings, pixmap, notify2).await });
-
-    (handle, notify)
+impl Default for Rgb64Encoder {
+    fn default() -> Self {
+        Self {}
+    }
 }
 
-/// Run the *RGB64* encoding algorithm in a loop.
-///
-/// Effectively, this periodically re-encodes the provided *pixmap*'s data into the given
-/// *encodings* storage.
-pub async fn run_encoder<P>(
-    encodings: SharedMultiEncodings,
-    pixmap: SharedPixmap<P>,
-    notify_stop: Arc<Notify>,
-) where
-    P: Pixmap,
-{
-    info!(target: LOG_TARGET, "Starting rgb64 encoder");
+impl Encoder for Rgb64Encoder {
+    type Storage = String;
 
-    let mut timer = interval(Duration::from_millis(100));
-    loop {
-        select! {
-            _ = timer.tick() => {
-                let encoding = encode(&pixmap);
-                {
-                    let mut lock = encodings.rgb64.lock().unwrap();
-                    (*lock) = encoding;
-                }
-            },
-            _ = notify_stop.notified() => {
-                log::info!("Stopping rgb64 encoder");
-                break
+    fn encode(pixmap_width: usize, pixmap_height: usize, pixmap_data: &[Color]) -> Self::Storage {
+        let mut result_data = Vec::with_capacity(pixmap_width * pixmap_height * 3);
+
+        for i in pixmap_data {
+            let i: u32 = i.into();
+            let color = i.to_le_bytes();
+            result_data.push(color[0]);
+            result_data.push(color[1]);
+            result_data.push(color[2]);
+        }
+
+        base64::encode(&result_data)
+    }
+
+    fn decode(data: &Self::Storage) -> Result<Vec<Color>> {
+        let mut result = Vec::new();
+
+        let mut color = [0u8; 3];
+        for (i, i_value) in base64::decode(data)?.iter().enumerate() {
+            if i % 3 == 0 {
+                color[0] = *i_value;
+            } else if i % 3 == 1 {
+                color[1] = *i_value;
+            } else if i % 3 == 2 {
+                color[2] = *i_value;
+                result.push(color.into());
             }
         }
+
+        Ok(result)
     }
-}
-
-fn encode<P>(pixmap: &SharedPixmap<P>) -> Encoding
-where
-    P: Pixmap,
-{
-    let mut data = Vec::with_capacity(pixmap.get_size().unwrap().0 * pixmap.get_size().unwrap().1 * 3);
-
-    for i in pixmap.get_raw_data().unwrap() {
-        let i: u32 = i.into();
-        let color = i.to_le_bytes();
-        data.push(color[0]);
-        data.push(color[1]);
-        data.push(color[2]);
-    }
-
-    base64::encode(&data)
-}
-
-/// Decode data that was encoded using the *RGB64* algorithm into a list of Colors
-pub fn decode(data: Encoding) -> Result<Vec<Color>> {
-    let mut result = Vec::new();
-
-    let mut color = [0u8; 3];
-    for (i, i_value) in base64::decode(data)?.iter().enumerate() {
-        if i % 3 == 0 {
-            color[0] = *i_value;
-        } else if i % 3 == 1 {
-            color[1] = *i_value;
-        } else if i % 3 == 2 {
-            color[2] = *i_value;
-            result.push(color.into());
-        }
-    }
-
-    Ok(result)
 }
 
 #[cfg(test)]

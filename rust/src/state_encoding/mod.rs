@@ -12,23 +12,13 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 pub use encodings::*;
+pub use rgb64::Rgb64Encoder;
+pub use rgba64::Rgba64Encoder;
 
 use crate::pixmap::{Pixmap, SharedPixmap};
 
+mod encoding_actor;
 mod encodings;
-pub mod rgb64;
-pub mod rgba64;
-
-/// Start background tasks for all encoding algorithms and return join handles to those tasks
-pub fn start_encoders<P>(
-    encodings: SharedMultiEncodings,
-    pixmap: SharedPixmap<P>,
-) -> Vec<(JoinHandle<()>, Arc<Notify>)>
-where
-    P: Pixmap + Send + Sync + 'static,
-{
-    vec![
-        rgb64::start_encoder(encodings.clone(), pixmap.clone()),
-        rgba64::start_encoder(encodings.clone(), pixmap.clone()),
-    ]
-}
+mod multi_encoders_client;
+mod rgb64;
+mod rgba64;
