@@ -2,7 +2,7 @@
 //! Networking layer for pixelflut servers and clients as well as on-the-wire protocol handling
 //!
 
-use actix::Addr;
+use actix::prelude::*;
 use std::convert::TryFrom;
 
 use anyhow::Result;
@@ -73,4 +73,10 @@ where
         // },
         _ => todo!("Re-implement encodings"),
     }
+}
+
+#[derive(Debug, Clone, Message)]
+#[rtype(result = "()")]
+struct ClientConnectedMsg<C: Actor> {
+    handler_addr: Addr<C>,
 }

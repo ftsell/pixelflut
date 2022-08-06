@@ -29,6 +29,7 @@ impl Default for UdpOptions {
     }
 }
 
+/// A UdpServer accepts datagram packets containing Pixelflut commands and handles them
 #[derive(Debug, Clone)]
 pub struct UdpServer<P: Pixmap + Unpin + 'static> {
     options: UdpOptions,
@@ -36,27 +37,26 @@ pub struct UdpServer<P: Pixmap + Unpin + 'static> {
 }
 
 impl<P: Pixmap + Unpin + 'static> UdpServer<P> {
+    /// Create a new UDP Server
     pub fn new(options: UdpOptions, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
         Self { options, pixmap_addr }
     }
 
     /// Listen on the udp port defined through *options* while using the given *pixmap* and *encodings*
     /// as backing data storage
-    pub async fn listen(&self, ctx: &mut <Self as Actor>::Context) -> tokio::io::Result<()> {
-        let socket = Arc::new(UdpSocket::bind(self.options.listen_address).await?);
+    pub async fn listen(options: UdpOptions, pixmap_addr: Addr<PixmapActor<P>>) -> tokio::io::Result<()> {
+        let socket = Arc::new(UdpSocket::bind(options.listen_address).await?);
         info!("Started udp listener on {}", socket.local_addr().unwrap());
 
         loop {
-            let pixmap_addr = self.pixmap_addr.clone();
+            let pixmap_addr = pixmap_addr.clone();
             let socket = socket.clone();
             let mut buffer = BytesMut::with_capacity(1024);
 
             let res = socket.recv_from(&mut buffer[..]).await;
             let (_num_read, origin) = res?;
 
-            ctx.spawn(wrap_future(async move {
-                UdpServer::process_received(pixmap_addr, buffer, origin, socket).await;
-            }));
+            UdpServer::process_received(pixmap_addr, buffer, origin, socket).await;
         }
     }
 
@@ -100,8 +100,9 @@ impl<P: Pixmap + Unpin + 'static> Actor for UdpServer<P> {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.spawn(wrap_future(async {
-            self.listen(ctx).await.unwrap();
+        let do_listen = Self::listen(self.options, self.pixmap_addr.clone());
+        ctx.spawn(wrap_future(async move {
+            do_listen.await.unwrap();
             ()
         }));
     }

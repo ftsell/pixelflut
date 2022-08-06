@@ -7,6 +7,7 @@ use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Supervise
 use std::net::{Ipv4Addr, SocketAddr};
 
 use crate::actor_util::StopActorMsg;
+use crate::net::ClientConnectedMsg;
 use anyhow::Error;
 use bytes::buf::Take;
 use bytes::{Buf, BytesMut};
@@ -34,6 +35,8 @@ impl Default for TcpOptions {
     }
 }
 
+/// A TcpServer listens on a certain port using TCP and serves as a Pixelflut server for clients that connect
+/// to it.
 #[derive(Debug, Clone)]
 pub struct TcpServer<P: Pixmap + Unpin + 'static> {
     options: TcpOptions,
@@ -42,6 +45,7 @@ pub struct TcpServer<P: Pixmap + Unpin + 'static> {
 }
 
 impl<P: Pixmap + Unpin + 'static> TcpServer<P> {
+    /// Create a new TcpServer
     pub fn new(options: TcpOptions, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
         Self {
             options,
@@ -52,21 +56,18 @@ impl<P: Pixmap + Unpin + 'static> TcpServer<P> {
 
     /// Listen on the tcp port defined through *options* while using the given *pixmap* and *encodings*
     /// as backing data storage
-    async fn listen(
-        &mut self,
-        // encodings: SharedMultiEncodings,
-    ) -> tokio::io::Result<()> {
-        let listener = TcpListener::bind(self.options.listen_address).await?;
+    async fn listen(self_addr: Addr<Self>, options: TcpOptions, pixmap_addr: Addr<PixmapActor<P>>) {
+        let listener = TcpListener::bind(options.listen_address).await.unwrap();
         log::info!("Started tcp server on {}", listener.local_addr().unwrap());
 
         loop {
             let res = listener.accept().await;
-            let (socket, _) = res?;
+            let (socket, _) = res.unwrap();
 
             // let encodings = encodings.clone();
 
-            let handler_addr = TcpConnectionHandler::new(socket, self.pixmap_addr.clone()).start();
-            self.clients.push(handler_addr);
+            let handler_addr = TcpConnectionHandler::new(socket, pixmap_addr.clone()).start();
+            self_addr.send(ClientConnectedMsg { handler_addr }).await.unwrap();
         }
     }
 }
@@ -75,41 +76,48 @@ impl<P: Pixmap + Unpin + 'static> Actor for TcpServer<P> {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.spawn(wrap_future(async {
-            TcpServer::listen(self).await.unwrap();
-            ()
-        }));
-    }
-
-    fn stopped(&mut self, ctx: &mut Self::Context) {
-        for client in self.clients {
-            client.send(StopActorMsg {});
-        }
+        ctx.spawn(wrap_future(Self::listen(
+            ctx.address(),
+            self.options,
+            self.pixmap_addr.clone(),
+        )));
     }
 }
 
 impl<P: Pixmap + Unpin + 'static> Supervised for TcpServer<P> {}
 
+impl<P: Pixmap + Unpin + 'static> Handler<ClientConnectedMsg<TcpConnectionHandler<P>>> for TcpServer<P> {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: ClientConnectedMsg<TcpConnectionHandler<P>>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        self.clients.push(msg.handler_addr)
+    }
+}
+
 pub(crate) struct TcpConnectionHandler<P: Pixmap + Unpin + 'static> {
-    stream: TcpStream,
-    read_buffer: BytesMut,
+    stream: Option<TcpStream>,
     pixmap_addr: Addr<PixmapActor<P>>,
 }
 
 impl<P: Pixmap + Unpin + 'static> TcpConnectionHandler<P> {
     pub fn new(stream: TcpStream, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
         Self {
-            read_buffer: BytesMut::with_capacity(256),
-            stream,
+            stream: Some(stream),
             pixmap_addr,
         }
     }
 
-    async fn handle_connection(&mut self) {
-        debug!("Client connected {}", self.stream.peer_addr().unwrap());
+    async fn handle_connection(mut stream: TcpStream, pixmap_addr: Addr<PixmapActor<P>>) {
+        debug!("Client connected {}", stream.peer_addr().unwrap());
+
+        let mut read_buffer = BytesMut::with_capacity(256);
         loop {
             // receive a frame from the client
-            let frame = self.read_frame().await;
+            let frame = Self::read_frame(&mut stream, &mut read_buffer).await;
             match frame {
                 Err(e) => {
                     warn!(target: LOG_TARGET, "Error reading frame: {}", e);
@@ -117,11 +125,11 @@ impl<P: Pixmap + Unpin + 'static> TcpConnectionHandler<P> {
                 }
                 Ok(frame) => {
                     // handle the frame
-                    match super::handle_frame(frame, &self.pixmap_addr).await {
+                    match super::handle_frame(frame, &pixmap_addr).await {
                         None => {}
                         Some(response) => {
                             // send back a response
-                            match self.write_frame(response).await {
+                            match Self::write_frame(&mut stream, response).await {
                                 Ok(_) => {}
                                 Err(e) => {
                                     warn!(target: LOG_TARGET, "Error writing frame: {}", e)
@@ -134,16 +142,19 @@ impl<P: Pixmap + Unpin + 'static> TcpConnectionHandler<P> {
         }
     }
 
-    pub(self) async fn read_frame(&mut self) -> std::io::Result<Frame<Take<BytesMut>>> {
+    pub(self) async fn read_frame(
+        stream: &mut TcpStream,
+        read_buffer: &mut BytesMut,
+    ) -> std::io::Result<Frame<Take<BytesMut>>> {
         loop {
-            match Frame::from_input(self.read_buffer.clone()) {
+            match Frame::from_input(read_buffer.clone()) {
                 Ok((frame, length)) => {
                     // discard the frame from the buffer
-                    self.read_buffer.advance(length);
+                    read_buffer.advance(length);
                     return Ok(frame);
                 }
                 Err(_) => {
-                    let n = self.stream.read_buf(&mut self.read_buffer).await?;
+                    let n = stream.read_buf(read_buffer).await?;
                     if n == 0 {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::UnexpectedEof,
@@ -155,11 +166,11 @@ impl<P: Pixmap + Unpin + 'static> TcpConnectionHandler<P> {
         }
     }
 
-    pub(self) async fn write_frame<B>(&mut self, frame: Frame<B>) -> std::io::Result<()>
+    pub(self) async fn write_frame<B>(stream: &mut TcpStream, frame: Frame<B>) -> std::io::Result<()>
     where
         B: Buf,
     {
-        self.stream.write_buf(&mut frame.encode()).await?;
+        stream.write_buf(&mut frame.encode()).await?;
         Ok(())
     }
 }
@@ -168,7 +179,12 @@ impl<P: Pixmap + Unpin + 'static> Actor for TcpConnectionHandler<P> {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.spawn(wrap_future(async { self.handle_connection().await }));
+        if let Some(stream) = self.stream.take() {
+            ctx.spawn(wrap_future(Self::handle_connection(
+                stream,
+                self.pixmap_addr.clone(),
+            )));
+        }
     }
 }
 

@@ -10,6 +10,8 @@ use futures_util::SinkExt;
 use std::convert::TryInto;
 use std::net::{Ipv4Addr, SocketAddr};
 
+use crate::actor_util::StopActorMsg;
+use crate::net::ClientConnectedMsg;
 use futures_util::stream::StreamExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Error as WsError;
@@ -83,18 +85,16 @@ impl<P: Pixmap + Unpin + 'static> Actor for WsServer<P> {
 
 impl<P: Pixmap + Unpin + 'static> Supervised for WsServer<P> {}
 
-impl<P: Pixmap + Unpin + 'static> Handler<ClientConnectedMsg<P>> for WsServer<P> {
+impl<P: Pixmap + Unpin + 'static> Handler<ClientConnectedMsg<WsConnectionHandler<P>>> for WsServer<P> {
     type Result = ();
 
-    fn handle(&mut self, msg: ClientConnectedMsg<P>, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(
+        &mut self,
+        msg: ClientConnectedMsg<WsConnectionHandler<P>>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
         self.clients.push(msg.handler_addr);
     }
-}
-
-#[derive(Debug, Clone, Message)]
-#[rtype(result = "()")]
-struct ClientConnectedMsg<P: Pixmap + Unpin + 'static> {
-    handler_addr: Addr<WsConnectionHandler<P>>,
 }
 
 pub(crate) struct WsConnectionHandler<P: Pixmap + Unpin + 'static> {
@@ -166,5 +166,13 @@ impl<P: Pixmap + Unpin + 'static> Actor for WsConnectionHandler<P> {
                 tcp_connection,
             )));
         }
+    }
+}
+
+impl<P: Pixmap + Unpin + 'static> Handler<StopActorMsg> for WsConnectionHandler<P> {
+    type Result = ();
+
+    fn handle(&mut self, _msg: StopActorMsg, ctx: &mut Self::Context) -> Self::Result {
+        ctx.stop()
     }
 }
