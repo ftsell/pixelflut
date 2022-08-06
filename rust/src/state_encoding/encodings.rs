@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::marker::PhantomData;
 
 pub trait Encoder {
-    type Storage: AsRef<[u8]> + Default;
+    type Storage: AsRef<[u8]> + Default + Clone;
 
     fn encode(pixmap_width: usize, pixmap_height: usize, pixmap_data: &[Color]) -> Self::Storage;
 

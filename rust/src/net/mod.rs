@@ -12,6 +12,7 @@ use crate::net::framing::Frame;
 use crate::pixmap::pixmap_actor::{GetPixelMsg, GetSizeMsg, PixmapActor, SetPixelMsg};
 use crate::pixmap::Pixmap;
 use crate::protocol::{Request, Response};
+use crate::state_encoding::DefaultMultiEncodersClient;
 
 pub mod framing;
 // pub mod udp_server;

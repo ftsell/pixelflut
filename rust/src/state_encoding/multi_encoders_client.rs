@@ -1,6 +1,9 @@
-use crate::state_encoding::{GetEncodedDataMsg, Rgb64Encoder, Rgba64Encoder};
+use crate::state_encoding::{AutoEncoder, GetEncodedDataMsg, Rgb64Encoder, Rgba64Encoder};
 use actix::dev::ToEnvelope;
 use actix::prelude::*;
+
+pub type DefaultMultiEncodersClient<P> =
+    MultiEncodersClient<AutoEncoder<P, Rgb64Encoder>, AutoEncoder<P, Rgba64Encoder>>;
 
 /// A client that automatically dispatches to the desired actor depending on which encoding is queried
 #[derive(Debug, Clone)]

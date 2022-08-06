@@ -1,6 +1,7 @@
 use crate::pixmap::pixmap_actor::{GetRawDataMsg, GetSizeMsg, PixmapActor};
 use crate::pixmap::Pixmap;
-use crate::state_encoding::Encoder;
+use crate::state_encoding::{Encoder, GetEncodedDataMsg};
+use actix::dev::MessageResponse;
 use actix::fut::wrap_future;
 use actix::prelude::*;
 use std::time::Duration;
@@ -100,6 +101,19 @@ where
                 selff.cache = encoding_result;
             }),
         )
+    }
+}
+
+impl<P, E> Handler<GetEncodedDataMsg<E>> for AutoEncoder<P, E>
+where
+    P: Pixmap + Unpin + 'static,
+    E: Encoder + 'static,
+    <E as Encoder>::Storage: MessageResponse<Self, GetEncodedDataMsg<E>> + Unpin + 'static,
+{
+    type Result = E::Storage;
+
+    fn handle(&mut self, _msg: GetEncodedDataMsg<E>, _ctx: &mut Self::Context) -> Self::Result {
+        self.cache.clone()
     }
 }
 

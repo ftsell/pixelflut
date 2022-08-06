@@ -7,13 +7,14 @@
 //! which periodically re-encode a pixmap.
 //!
 
+mod auto_encoder;
 mod encodings;
 mod multi_encoders_client;
 mod rgb64;
 mod rgba64;
-mod auto_encoder;
 
-pub use encodings::*;
+pub use auto_encoder::AutoEncoder;
+pub use encodings::{Encoder, GetEncodedDataMsg};
+pub use multi_encoders_client::{DefaultMultiEncodersClient, MultiEncodersClient};
 pub use rgb64::Rgb64Encoder;
 pub use rgba64::Rgba64Encoder;
-pub use auto_encoder::AutoEncoder;
