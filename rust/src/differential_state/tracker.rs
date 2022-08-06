@@ -42,6 +42,11 @@ impl Tracker {
     pub fn get_changes(&mut self) -> impl Iterator<Item = TrackedChange> + ExactSizeIterator + '_ {
         self.changes.drain()
     }
+
+    /// Clear the internal list of all tracked changes
+    pub fn clear(&mut self) {
+        self.changes.clear();
+    }
 }
 
 /// A change to a certain pixel inside a certain pixmap that can be tracked using a [`Tracker`]

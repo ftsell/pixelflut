@@ -6,7 +6,6 @@
 use std::sync::{Arc, Mutex};
 
 mod tracker;
-pub use tracker::Tracker;
+mod tracker_actor;
 
-/// A [`Tracker`] that can be shared between threads safely
-pub type SharedTracker = Arc<Mutex<Tracker>>;
+pub use tracker::Tracker;

@@ -37,7 +37,9 @@ name = "pixmap_benchmark"
 harness = false
 
 [dependencies]
+actix = "0.13.0"
 anyhow = "^1"
+async-trait = "0.1.57"
 base64 = "^0.13"
 byteorder = "^1"
 bytes = "^1"
