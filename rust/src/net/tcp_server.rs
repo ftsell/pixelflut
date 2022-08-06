@@ -2,19 +2,22 @@
 //! Server for handling the pixelflut protocol over TCP connections
 //!
 
+use actix::fut::wrap_future;
+use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Supervised};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
+use crate::actor_util::StopActorMsg;
 use anyhow::Error;
 use bytes::buf::Take;
 use bytes::{Buf, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::select;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::net::framing::Frame;
+use crate::pixmap::pixmap_actor::PixmapActor;
 use crate::pixmap::{Pixmap, SharedPixmap};
 use crate::state_encoding::SharedMultiEncodings;
 
@@ -35,136 +38,103 @@ impl Default for TcpOptions {
     }
 }
 
-/// Start the tcp server on a new task.
-///
-/// This binds to the socket address specified via *options* with TCP and
-/// uses the provided *pixmap* as a pixel data storage and *encodings* for reading cached state command results.
-///
-/// It returns a JoinHandle to the task that is executing the server logic as well as a
-/// Notify instance that can be used to stop the server.
-pub fn start_listener<P>(
-    pixmap: SharedPixmap<P>,
-    encodings: SharedMultiEncodings,
+#[derive(Debug, Clone)]
+pub struct TcpServer<P: Pixmap + Unpin + 'static> {
     options: TcpOptions,
-) -> (JoinHandle<tokio::io::Result<()>>, Arc<Notify>)
-where
-    P: Pixmap + Send + Sync + 'static,
-{
-    let notify = Arc::new(Notify::new());
-    let notify2 = notify.clone();
-    let handle = tokio::spawn(async move { listen(pixmap, encodings, options, notify2).await });
-
-    (handle, notify)
+    pixmap_addr: Addr<PixmapActor<P>>,
+    clients: Vec<Addr<TcpConnectionHandler<P>>>,
 }
 
-/// Listen on the tcp port defined through *options* while using the given *pixmap* and *encodings*
-/// as backing data storage
-pub async fn listen<P>(
-    pixmap: SharedPixmap<P>,
-    encodings: SharedMultiEncodings,
-    options: TcpOptions,
-    notify_stop: Arc<Notify>,
-) -> tokio::io::Result<()>
-where
-    P: Pixmap + Send + Sync + 'static,
-{
-    let mut connection_stop_notifies = Vec::new();
-    let listener = TcpListener::bind(options.listen_address).await?;
-    info!(
-        target: LOG_TARGET,
-        "Started tcp server on {}",
-        listener.local_addr().unwrap()
-    );
+impl<P: Pixmap + Unpin + 'static> TcpServer<P> {
+    pub fn new(options: TcpOptions, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
+        Self {
+            options,
+            pixmap_addr,
+            clients: Vec::new(),
+        }
+    }
 
-    loop {
-        select! {
-            res = listener.accept() => {
-                let (socket, _) = res?;
-                let pixmap = pixmap.clone();
-                let encodings = encodings.clone();
-                let connection_stop_notify = Arc::new(Notify::new());
-                connection_stop_notifies.push(connection_stop_notify.clone());
-                tokio::spawn(async move {
-                    process_connection(
-                        TcpConnection::new(socket),
-                        pixmap,
-                        encodings,
-                        connection_stop_notify,
-                    )
-                    .await;
-                });
-            },
-            _ = notify_stop.notified() => {
-                log::info!("Stopping tcp server on {}", listener.local_addr().unwrap());
-                for i_notify in connection_stop_notifies.iter() {
-                    i_notify.notify_one();
-                }
-                break Ok(());
-            }
-        };
+    /// Listen on the tcp port defined through *options* while using the given *pixmap* and *encodings*
+    /// as backing data storage
+    async fn listen(
+        &mut self,
+        // encodings: SharedMultiEncodings,
+    ) -> tokio::io::Result<()> {
+        let listener = TcpListener::bind(self.options.listen_address).await?;
+        log::info!("Started tcp server on {}", listener.local_addr().unwrap());
+
+        loop {
+            let res = listener.accept().await;
+            let (socket, _) = res?;
+
+            // let encodings = encodings.clone();
+
+            let handler_addr = TcpConnectionHandler::new(socket, self.pixmap_addr.clone()).start();
+            self.clients.push(handler_addr);
+        }
     }
 }
 
-async fn process_connection<P>(
-    mut connection: TcpConnection,
-    pixmap: SharedPixmap<P>,
-    encodings: SharedMultiEncodings,
-    notify_stop: Arc<Notify>,
-) where
-    P: Pixmap,
-{
-    debug!(
-        target: LOG_TARGET,
-        "Client connected {}",
-        connection.stream.peer_addr().unwrap()
-    );
-    loop {
-        // receive a frame from the client
-        select! {
-            frame = connection.read_frame() => {
-                match frame {
-                    Err(e) => {
-                        warn!(target: LOG_TARGET, "Error reading frame: {}", e);
-                        return;
-                    }
-                    Ok(frame) => {
-                        // handle the frame
-                        match super::handle_frame(frame, &pixmap, &encodings) {
-                            None => {}
-                            Some(response) => {
-                                // send back a response
-                                match connection.write_frame(response).await {
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        warn!(target: LOG_TARGET, "Error writing frame: {}", e)
-                                    }
+impl<P: Pixmap + Unpin + 'static> Actor for TcpServer<P> {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.spawn(wrap_future(async {
+            TcpServer::listen(self).await.unwrap();
+            ()
+        }));
+    }
+
+    fn stopped(&mut self, ctx: &mut Self::Context) {
+        for client in self.clients {
+            client.send(StopActorMsg {});
+        }
+    }
+}
+
+impl<P: Pixmap + Unpin + 'static> Supervised for TcpServer<P> {}
+
+pub(crate) struct TcpConnectionHandler<P: Pixmap + Unpin + 'static> {
+    stream: TcpStream,
+    read_buffer: BytesMut,
+    pixmap_addr: Addr<PixmapActor<P>>,
+}
+
+impl<P: Pixmap + Unpin + 'static> TcpConnectionHandler<P> {
+    pub fn new(stream: TcpStream, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
+        Self {
+            read_buffer: BytesMut::with_capacity(256),
+            stream,
+            pixmap_addr,
+        }
+    }
+
+    async fn handle_connection(&mut self) {
+        debug!("Client connected {}", self.stream.peer_addr().unwrap());
+        loop {
+            // receive a frame from the client
+            let frame = self.read_frame().await;
+            match frame {
+                Err(e) => {
+                    warn!(target: LOG_TARGET, "Error reading frame: {}", e);
+                    return;
+                }
+                Ok(frame) => {
+                    // handle the frame
+                    match super::handle_frame(frame, &self.pixmap_addr) {
+                        None => {}
+                        Some(response) => {
+                            // send back a response
+                            match self.write_frame(response).await {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    warn!(target: LOG_TARGET, "Error writing frame: {}", e)
                                 }
                             }
                         }
                     }
                 }
-            },
-            _ = notify_stop.notified() => {
-                log::info!("Closing connection to {}", connection.stream.peer_addr().unwrap());
-                match connection.stream.shutdown().await {
-                    Ok(_) => {}
-                    Err(e) => log::warn!("Error closing connection: {}", e)
-                }
             }
-        }
-    }
-}
-
-pub(crate) struct TcpConnection {
-    stream: TcpStream,
-    read_buffer: BytesMut,
-}
-
-impl TcpConnection {
-    pub fn new(stream: TcpStream) -> Self {
-        Self {
-            read_buffer: BytesMut::with_capacity(256),
-            stream,
         }
     }
 
@@ -195,5 +165,21 @@ impl TcpConnection {
     {
         self.stream.write_buf(&mut frame.encode()).await?;
         Ok(())
+    }
+}
+
+impl<P: Pixmap + Unpin + 'static> Actor for TcpConnectionHandler<P> {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.spawn(wrap_future(async { self.handle_connection().await }));
+    }
+}
+
+impl<P: Pixmap + Unpin + 'static> Handler<StopActorMsg> for TcpConnectionHandler<P> {
+    type Result = ();
+
+    fn handle(&mut self, _msg: StopActorMsg, ctx: &mut Self::Context) -> Self::Result {
+        ctx.stop()
     }
 }
