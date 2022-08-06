@@ -5,7 +5,6 @@
 use actix::fut::wrap_future;
 use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Supervised};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::Arc;
 
 use crate::actor_util::StopActorMsg;
 use anyhow::Error;
@@ -13,13 +12,10 @@ use bytes::buf::Take;
 use bytes::{Buf, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Notify;
-use tokio::task::JoinHandle;
 
 use crate::net::framing::Frame;
 use crate::pixmap::pixmap_actor::PixmapActor;
-use crate::pixmap::{Pixmap, SharedPixmap};
-use crate::state_encoding::SharedMultiEncodings;
+use crate::pixmap::Pixmap;
 
 static LOG_TARGET: &str = "pixelflut.net.tcp";
 
@@ -121,7 +117,7 @@ impl<P: Pixmap + Unpin + 'static> TcpConnectionHandler<P> {
                 }
                 Ok(frame) => {
                     // handle the frame
-                    match super::handle_frame(frame, &self.pixmap_addr) {
+                    match super::handle_frame(frame, &self.pixmap_addr).await {
                         None => {}
                         Some(response) => {
                             // send back a response
