@@ -7,7 +7,7 @@ use anyhow::{Error, Result};
 
 use crate::net::framing::Frame;
 use crate::protocol::{Request, Response, StateEncodingAlgorithm};
-use crate::state_encoding;
+use crate::state_encoding::{Encoder, Rgb64Encoder};
 
 use super::*;
 
@@ -135,7 +135,7 @@ where
     fn get_raw_data(&self) -> Result<Vec<Color>> {
         self.send_and_receive(Request::State(StateEncodingAlgorithm::Rgb64))
             .and_then(|response| match response {
-                Response::State(StateEncodingAlgorithm::Rgb64, data) => state_encoding::rgb64::decode(data),
+                Response::State(StateEncodingAlgorithm::Rgb64, data) => Rgb64Encoder::decode(&data),
                 _ => Err(Error::msg("invalid response for STATE request")),
             })
     }

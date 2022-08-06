@@ -9,13 +9,8 @@ use anyhow::Result;
 use crate::pixmap::Color;
 use crate::state_encoding::Encoder;
 
+#[derive(Debug, Copy, Clone)]
 pub struct Rgb64Encoder {}
-
-impl Default for Rgb64Encoder {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 impl Encoder for Rgb64Encoder {
     type Storage = String;

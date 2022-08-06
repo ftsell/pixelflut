@@ -4,22 +4,10 @@
 // At the end everything is base64 encoded.
 //!
 
-use std::sync::Arc;
-use tokio::select;
-use tokio::sync::Notify;
-use tokio::task::JoinHandle;
-use tokio::time::{interval, Duration};
-
 use super::Encoder;
-use crate::pixmap::{Color, Pixmap, SharedPixmap};
+use crate::pixmap::Color;
 
 pub struct Rgba64Encoder {}
-
-impl Default for Rgba64Encoder {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 impl Encoder for Rgba64Encoder {
     type Storage = String;
