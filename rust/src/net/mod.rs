@@ -14,11 +14,10 @@ use crate::pixmap::Pixmap;
 use crate::protocol::{Request, Response};
 
 pub mod framing;
-pub mod tcp_server;
-pub mod udp_server;
-pub mod ws_server;
-
-//static LOG_TARGET: &str = "pixelflut.net";
+// pub mod udp_server;
+pub mod tcp;
+pub mod udp;
+pub mod ws;
 
 /// handle a request frame and return a response frame
 async fn handle_frame<P, B>(input: Frame<B>, pixmap_addr: &Addr<PixmapActor<P>>) -> Option<Frame<Bytes>>
@@ -77,6 +76,6 @@ where
 
 #[derive(Debug, Clone, Message)]
 #[rtype(result = "()")]
-struct ClientConnectedMsg<C: Actor> {
-    handler_addr: Addr<C>,
+struct ClientConnectedMsg<C> {
+    connection: C,
 }

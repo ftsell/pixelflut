@@ -62,16 +62,16 @@ impl<P: Pixmap + Unpin + 'static> Handler<PutRawDataMsg> for PixmapActor<P> {
 #[derive(Debug, Copy, Clone, Message)]
 #[rtype(result = "Result<Color>")]
 pub struct GetPixelMsg {
-    x: usize,
-    y: usize,
+    pub x: usize,
+    pub y: usize,
 }
 
 #[derive(Debug, Copy, Clone, Message)]
 #[rtype(result = "Result<()>")]
 pub struct SetPixelMsg {
-    x: usize,
-    y: usize,
-    color: Color,
+    pub x: usize,
+    pub y: usize,
+    pub color: Color,
 }
 
 #[derive(Debug, Copy, Clone, Message)]
@@ -85,5 +85,5 @@ pub struct GetRawDataMsg {}
 #[derive(Debug, Clone, Message)]
 #[rtype(result = "Result<()>")]
 pub struct PutRawDataMsg {
-    data: Vec<Color>,
+    pub data: Vec<Color>,
 }
