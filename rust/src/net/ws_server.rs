@@ -4,23 +4,20 @@
 //! This implementation is currently fairly basic and only really intended to be used by [pixelflut-js](https://github.com/ftsell/pixelflut-js)
 //!
 
+use actix::fut::wrap_future;
+use actix::prelude::*;
+use futures_util::SinkExt;
 use std::convert::TryInto;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::Arc;
 
 use futures_util::stream::StreamExt;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::select;
-use tokio::sync::Notify;
-use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Error as WsError;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::net::framing::Frame;
-use crate::pixmap::{Pixmap, SharedPixmap};
-use crate::state_encoding::SharedMultiEncodings;
-
-static LOG_TARGET: &str = "pixelflut.net.ws";
+use crate::pixmap::pixmap_actor::PixmapActor;
+use crate::pixmap::Pixmap;
 
 /// Options which can be given to [`listen`] for detailed configuration
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -37,172 +34,137 @@ impl Default for WsOptions {
     }
 }
 
-/// Start the websocket server on a new task.
-///
-/// This binds to the socket address specified via *options* with TCP but expects only websocket
-/// traffic on it. All pixelflut commands must then be passed over the created websocket channel
-/// ond not directly via TCP.
-///
-/// It uses the provided *pixmap* as a pixel data storage and *encodings* for reading cached state
-/// command results.
-///
-/// It returns a JoinHandle to the task that is executing the server logic as well as a Notify
-/// instance that can be used to stop the server.
-pub fn start_listener<P>(
-    pixmap: SharedPixmap<P>,
-    encodings: SharedMultiEncodings,
+/// A WebSocket server accepts incoming connections, upgrades the protocol to WebSocket and then handles
+/// Pixelflut messages that are transmitted via the WebSocket connection
+#[derive(Debug, Clone)]
+pub struct WsServer<P: Pixmap + Unpin + 'static> {
     options: WsOptions,
-) -> (JoinHandle<tokio::io::Result<()>>, Arc<Notify>)
-where
-    P: Pixmap + Send + Sync + 'static,
-{
-    let notify = Arc::new(Notify::new());
-    let notify2 = notify.clone();
-    let handle = tokio::spawn(async move { listen(pixmap, encodings, options, notify2).await });
-
-    (handle, notify)
+    pixmap_addr: Addr<PixmapActor<P>>,
+    clients: Vec<Addr<WsConnectionHandler<P>>>,
 }
 
-/// Listen on the tpc port defined through *options* while using the given *pixmap* and *encodings*
-/// as backing data storage
-pub async fn listen<P>(
-    pixmap: SharedPixmap<P>,
-    encodings: SharedMultiEncodings,
-    options: WsOptions,
-    notify_stop: Arc<Notify>,
-) -> tokio::io::Result<()>
-where
-    P: Pixmap + Send + Sync + 'static,
-{
-    let mut connection_stop_notifies = Vec::new();
-    let listener = TcpListener::bind(options.listen_address).await.unwrap();
-    info!(
-        target: LOG_TARGET,
-        "Started websocket listener on {}",
-        listener.local_addr().unwrap()
-    );
+impl<P: Pixmap + Unpin + 'static> WsServer<P> {
+    /// Create a new WebSocket server with the given parameters
+    pub fn new(options: WsOptions, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
+        Self {
+            options,
+            pixmap_addr,
+            clients: Vec::new(),
+        }
+    }
 
-    loop {
-        select! {
-            res = listener.accept() => {
-                let (socket, _) = res?;
-                let pixmap = pixmap.clone();
-                let encodings = encodings.clone();
-                let connection_stop_notify = Arc::new(Notify::new());
-                connection_stop_notifies.push(connection_stop_notify.clone());
-                tokio::spawn(async move {
-                    process_connection(socket, pixmap, encodings, connection_stop_notify).await;
-                });
+    /// Listen on the tpc port defined through *options* while using the given *pixmap* and *encodings*
+    /// as backing data storage
+    pub async fn listen(self_addr: Addr<Self>, options: WsOptions, pixmap_addr: Addr<PixmapActor<P>>) {
+        let listener = TcpListener::bind(options.listen_address).await.unwrap();
+        info!("Started websocket listener on {}", listener.local_addr().unwrap());
+
+        loop {
+            let res = listener.accept().await;
+            let (socket, _) = res.unwrap();
+
+            let handler_addr = WsConnectionHandler::new(socket, pixmap_addr.clone()).start();
+            self_addr.send(ClientConnectedMsg { handler_addr }).await.unwrap();
+        }
+    }
+}
+
+impl<P: Pixmap + Unpin + 'static> Actor for WsServer<P> {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.spawn(wrap_future(Self::listen(
+            ctx.address(),
+            self.options,
+            self.pixmap_addr.clone(),
+        )));
+    }
+}
+
+impl<P: Pixmap + Unpin + 'static> Supervised for WsServer<P> {}
+
+impl<P: Pixmap + Unpin + 'static> Handler<ClientConnectedMsg<P>> for WsServer<P> {
+    type Result = ();
+
+    fn handle(&mut self, msg: ClientConnectedMsg<P>, _ctx: &mut Self::Context) -> Self::Result {
+        self.clients.push(msg.handler_addr);
+    }
+}
+
+#[derive(Debug, Clone, Message)]
+#[rtype(result = "()")]
+struct ClientConnectedMsg<P: Pixmap + Unpin + 'static> {
+    handler_addr: Addr<WsConnectionHandler<P>>,
+}
+
+pub(crate) struct WsConnectionHandler<P: Pixmap + Unpin + 'static> {
+    uninit_connection: Option<TcpStream>,
+    pixmap_addr: Addr<PixmapActor<P>>,
+}
+
+impl<P: Pixmap + Unpin + 'static> WsConnectionHandler<P> {
+    fn new(connection: TcpStream, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
+        Self {
+            uninit_connection: Some(connection),
+            pixmap_addr,
+        }
+    }
+
+    async fn handle_connection(pixmap_addr: Addr<PixmapActor<P>>, tcp_connection: TcpStream) {
+        debug!("Client connected {}", tcp_connection.peer_addr().unwrap());
+
+        let websocket = tokio_tungstenite::accept_async(tcp_connection).await.unwrap();
+        let (mut write, mut read) = websocket.split();
+
+        while let Some(msg) = read.next().await {
+            let response = Self::process_received(&pixmap_addr, msg).await.unwrap();
+            write.send(response).await.unwrap();
+        }
+    }
+
+    async fn process_received(
+        pixmap_addr: &Addr<PixmapActor<P>>,
+        msg: Result<Message, WsError>,
+    ) -> Result<Message, WsError>
+    where
+        P: Pixmap,
+    {
+        match msg {
+            Ok(msg) => match msg {
+                Message::Text(msg) => {
+                    debug!("Received websocket message: {}", msg);
+
+                    // TODO improve websocket frame handling
+                    let frame = Frame::new_from_string(msg);
+
+                    // TODO improve by not sending empty responses
+                    match super::handle_frame(frame, &pixmap_addr).await {
+                        None => Ok(Message::Text(String::new())),
+                        Some(response) => Ok(Message::Text(response.try_into().unwrap())),
+                    }
+                }
+                _ => {
+                    warn!("Could not handle websocket message: {}", msg);
+                    Ok(Message::text(String::new()))
+                }
             },
-            _ = notify_stop.notified() => {
-                log::info!("Stopping ws server on {}", listener.local_addr().unwrap());
-                for i_notify in connection_stop_notifies.iter() {
-                    i_notify.notify_one();
-                }
-                break Ok(());
+            Err(e) => {
+                warn!("Websocket error: {}", e);
+                Ok(Message::Text(String::new()))
             }
         }
     }
 }
 
-async fn process_connection<P>(
-    connection: TcpStream,
-    pixmap: SharedPixmap<P>,
-    encodings: SharedMultiEncodings,
-    notify_stop: Arc<Notify>,
-) where
-    P: Pixmap,
-{
-    debug!(
-        target: LOG_TARGET,
-        "Client connected {}",
-        connection.peer_addr().unwrap()
-    );
-    let websocket = tokio_tungstenite::accept_async(connection).await.unwrap();
-    let (write, read) = websocket.split();
-    let future = read
-        .map(|msg| process_received(msg, pixmap.clone(), encodings.clone()))
-        .forward(write);
+impl<P: Pixmap + Unpin + 'static> Actor for WsConnectionHandler<P> {
+    type Context = Context<Self>;
 
-    select! {
-        res = future => {
-            if let Err(e) = res {
-                warn!(target: LOG_TARGET, "Error while handling connection: {}", e)
-            }
-        },
-        _ = notify_stop.notified() => {
-            log::info!("Closing connection");
+    fn started(&mut self, ctx: &mut Self::Context) {
+        if let Some(tcp_connection) = self.uninit_connection.take() {
+            ctx.spawn(wrap_future(Self::handle_connection(
+                self.pixmap_addr.clone(),
+                tcp_connection,
+            )));
         }
     }
 }
-
-fn process_received<P>(
-    msg: Result<Message, WsError>,
-    pixmap: SharedPixmap<P>,
-    encodings: SharedMultiEncodings,
-) -> Result<Message, WsError>
-where
-    P: Pixmap,
-{
-    match msg {
-        Ok(msg) => match msg {
-            Message::Text(msg) => {
-                debug!(target: LOG_TARGET, "Received websocket message: {}", msg);
-
-                // TODO improve websocket frame handling
-                let frame = Frame::new_from_string(msg);
-
-                // TODO improve by not sending empty responses
-                match super::handle_frame(frame, &pixmap, &encodings) {
-                    None => Ok(Message::Text(String::new())),
-                    Some(response) => Ok(Message::Text(response.try_into().unwrap())),
-                }
-            }
-            _ => {
-                warn!(target: LOG_TARGET, "Could not handle websocket message: {}", msg);
-                Ok(Message::text(String::new()))
-            }
-        },
-        Err(e) => {
-            warn!(target: LOG_TARGET, "Websocket error: {}", e);
-            Ok(Message::Text(String::new()))
-        }
-    }
-}
-
-/*
-async fn process_received(
-    buffer: BytesMut,
-    num_read: usize,
-    origin: SocketAddr,
-    socket: Arc<UdpSocket>,
-    pixmap: SharedPixmap,
-) {
-    let mut buffer = Cursor::new(&buffer[..num_read]);
-
-    let frame = match Frame::check(&mut buffer) {
-        Err(_) => return,
-        Ok(_) => {
-            // reset the cursor so that `parse` can read the same bytes as `check`
-            buffer.set_position(0);
-
-            Frame::parse(&mut buffer).ok().unwrap()
-        }
-    };
-
-    // handle the frame
-    let response = super::handle_frame(frame, &pixmap);
-
-    // sen the response back to the client (if there is one)
-    match response {
-        None => {}
-        Some(response) => match socket.send_to(&response.encode()[..], origin).await {
-            Err(e) => warn!(
-                target: LOG_TARGET,
-                "Could not send response to {} because: {}", origin, e
-            ),
-            Ok(_) => {}
-        },
-    };
-}
- */
