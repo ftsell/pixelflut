@@ -3,11 +3,19 @@
 use crate::pixmap::{Color, Pixmap};
 use actix::prelude::*;
 use anyhow::Result;
+use std::any::type_name;
 
 /// An actor that manages a [`Pixmap`] and synchronizes access to it
 #[derive(Debug, Clone)]
 pub struct PixmapActor<P: Pixmap> {
     pixmap: P,
+}
+
+impl<P: Pixmap> PixmapActor<P> {
+    /// Create a new PixmapActor that is backed by the given pixmap
+    pub fn new(pixmap: P) -> Self {
+        Self { pixmap }
+    }
 }
 
 impl<P: Pixmap + Default> Default for PixmapActor<P> {
@@ -18,6 +26,10 @@ impl<P: Pixmap + Default> Default for PixmapActor<P> {
 
 impl<P: Pixmap + Unpin + 'static> Actor for PixmapActor<P> {
     type Context = Context<Self>;
+
+    fn started(&mut self, _ctx: &mut Self::Context) {
+        log::debug!("Started PixmapActor<{}>", type_name::<P>())
+    }
 }
 
 impl<P: Pixmap + Unpin + 'static> Supervised for PixmapActor<P> {}

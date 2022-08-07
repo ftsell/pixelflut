@@ -4,6 +4,7 @@ use crate::state_encoding::{Encoder, GetEncodedDataMsg};
 use actix::dev::MessageResponse;
 use actix::fut::wrap_future;
 use actix::prelude::*;
+use std::any::type_name;
 use std::time::Duration;
 
 /// An AutoEncoder periodically encodes the pixmap content and caches the result.
@@ -52,6 +53,8 @@ where
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
+        log::debug!("Starting AutoEncoder<{}>", type_name::<E>());
+
         if self.interval_handle.is_some() {
             panic!("AutoEncoder actor was trying to be started but already has an interval handle");
         }
@@ -59,8 +62,12 @@ where
         let mut interval = actix::clock::interval(self.interval_period);
         let self_addr = ctx.address();
         let handle = ctx.spawn(wrap_future(async move {
-            interval.tick().await;
-            self_addr.send(TriggerEncodingMsg {}).await.unwrap();
+            log::debug!("Now executing AutoEncoder<{}> encoding task", type_name::<E>());
+
+            loop {
+                interval.tick().await;
+                self_addr.send(TriggerEncodingMsg {}).await.unwrap();
+            }
             ()
         }));
 

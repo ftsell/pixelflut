@@ -1,21 +1,27 @@
+use actix::prelude::*;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::exit;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::time::Duration;
 
 use clap::value_t_or_exit;
 use pretty_env_logger;
 
 use pixelflut;
+use pixelflut::net::tcp::{TcpOptions, TcpServer};
+use pixelflut::net::udp::{UdpOptions, UdpServer};
+use pixelflut::net::ws::{WsOptions, WsServer};
+use pixelflut::pixmap::pixmap_actor::PixmapActor;
 use pixelflut::pixmap::Pixmap;
+use pixelflut::state_encoding::{AutoEncoder, MultiEncodersClient, Rgb64Encoder, Rgba64Encoder};
 
 mod cli;
+mod differential_state;
 #[cfg(feature = "gui")]
 mod gui;
-mod differential_state;
 
-#[tokio::main]
+#[actix::main]
 async fn main() {
     pretty_env_logger::init();
 
@@ -73,73 +79,69 @@ async fn start_server(
     // create pixmap instances
     let primary_pixmap =
         pixelflut::pixmap::InMemoryPixmap::new(width, height).expect("could not create in memory pixmap");
-    let file_pixmap = pixelflut::pixmap::FileBackedPixmap::new(&Path::new(path), width, height, false)
-        .expect(&format!("could not create pixmap backed by file {}", path));
+    // let file_pixmap = pixelflut::pixmap::FileBackedPixmap::new(&Path::new(path), width, height, false)
+    //     .expect(&format!("could not create pixmap backed by file {}", path));
 
     // copy data from file into memory
-    primary_pixmap
-        .put_raw_data(
-            &file_pixmap
-                .get_raw_data()
-                .expect("could not load pixel data from file"),
-        )
-        .expect("could not put pixel data into memory");
+    // primary_pixmap
+    //     .put_raw_data(
+    //         &file_pixmap
+    //             .get_raw_data()
+    //             .expect("could not load pixel data from file"),
+    //     )
+    //     .expect("could not put pixel data into memory");
 
     // create final pixmap instance which automatically saves data into file
-    let pixmap = Arc::new(
-        pixelflut::pixmap::ReplicatingPixmap::new(primary_pixmap, vec![Box::new(file_pixmap)], 0.2).unwrap(),
-    );
-    let encodings = pixelflut::state_encoding::SharedMultiEncodings::default();
-    let mut server_handles = Vec::new();
+    // let pixmap =
+    //     pixelflut::pixmap::ReplicatingPixmap::new(primary_pixmap, vec![Box::new(file_pixmap)], 0.2).unwrap();
+    let pixmap_addr = PixmapActor::new(primary_pixmap).start();
 
-    if let Some(tcp_port) = tcp_port {
-        let pixmap = pixmap.clone();
-        let encodings = encodings.clone();
-        let (handle, _) = pixelflut::net::tcp_server::start_listener(
-            pixmap,
-            encodings,
-            pixelflut::net::tcp_server::TcpOptions {
+    // start AutoEncoders for the pixmap
+    let rgb64_encoder: Addr<AutoEncoder<_, Rgb64Encoder>> =
+        AutoEncoder::new(Duration::from_secs(1), pixmap_addr.clone()).start();
+    let rgba64_encoder: Addr<AutoEncoder<_, Rgba64Encoder>> =
+        AutoEncoder::new(Duration::from_secs(1), pixmap_addr.clone()).start();
+    let enc_client = MultiEncodersClient::new(rgb64_encoder.recipient(), rgba64_encoder.recipient());
+
+    let _tcp_server = tcp_port.map(|tcp_port| {
+        TcpServer::new(
+            TcpOptions {
                 listen_address: SocketAddr::from_str(&format!("0.0.0.0:{}", tcp_port))
                     .expect("could not build SocketAddr"),
             },
-        );
-        server_handles.push(handle);
-    }
+            pixmap_addr.clone(),
+            enc_client.clone(),
+        )
+        .start()
+    });
 
-    if let Some(udp_port) = udp_port {
-        let pixmap = pixmap.clone();
-        let encodings = encodings.clone();
-        let (handle, _) = pixelflut::net::udp_server::start_listener(
-            pixmap,
-            encodings,
-            pixelflut::net::udp_server::UdpOptions {
+    let _udp_server = udp_port.map(|udp_port| {
+        UdpServer::new(
+            UdpOptions {
                 listen_address: SocketAddr::from_str(&format!("0.0.0.0:{}", udp_port))
                     .expect("could not build SocketAddr"),
             },
-        );
-        server_handles.push(handle);
-    }
+            pixmap_addr.clone(),
+            enc_client.clone(),
+        )
+        .start()
+    });
 
-    if let Some(ws_port) = ws_port {
-        let pixmap = pixmap.clone();
-        let encodings = encodings.clone();
-        let (handle, _) = pixelflut::net::ws_server::start_listener(
-            pixmap.clone(),
-            encodings.clone(),
-            pixelflut::net::ws_server::WsOptions {
+    let _ws_server = ws_port.map(|ws_port| {
+        WsServer::new(
+            WsOptions {
                 listen_address: SocketAddr::from_str(&format!("0.0.0.0:{}", ws_port))
                     .expect("could not build SocketAddr"),
             },
-        );
-        server_handles.push(handle);
-    }
+            pixmap_addr,
+            enc_client,
+        )
+        .start()
+    });
 
-    let encoder_handles = pixelflut::state_encoding::start_encoders(encodings, pixmap);
-
-    for handle in server_handles {
-        let _ = tokio::join!(handle);
-    }
-    for handle in encoder_handles {
-        let _ = tokio::join!(handle.0);
+    // block the runtime so the program doesn't shutdown
+    let mut interval = actix::clock::interval(Duration::from_secs(1));
+    loop {
+        interval.tick().await;
     }
 }

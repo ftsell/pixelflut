@@ -5,6 +5,7 @@
 
 use gtk::glib::Sender;
 use pixelflut::net;
+use pixelflut::net::tcp;
 use pixelflut::pixmap::InMemoryPixmap;
 use relm4::{send, ComponentUpdate, Model};
 use std::net::{IpAddr, SocketAddr};
@@ -152,10 +153,10 @@ fn start_server(
     encodings: SharedMultiEncodings,
 ) -> (JoinHandle<tokio::io::Result<()>>, Arc<Notify>) {
     match protocol {
-        ProtocolChoice::TCP => net::tcp_server::start_listener(
+        ProtocolChoice::TCP => tcp::tcp_server::start_listener(
             pixmap,
             encodings,
-            net::tcp_server::TcpOptions {
+            tcp::tcp_server::TcpOptions {
                 listen_address: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), port),
             },
         ),
