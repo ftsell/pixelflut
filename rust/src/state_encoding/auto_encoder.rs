@@ -23,7 +23,7 @@ where
     interval_period: Duration,
     interval_handle: Option<SpawnHandle>,
     pixmap_addr: Addr<PixmapActor<P>>,
-    cache: E::Storage,
+    cache: E::ResultFormat,
 }
 
 impl<P, E> AutoEncoder<P, E>
@@ -31,10 +31,12 @@ where
     P: Pixmap + Unpin + 'static,
     E: Encoder,
 {
+    /// Create a new AutoEncoder that encodes the pixmap behind *pixmap_addr* periodically.
+    /// The period is defined through *interval_period*.
     pub fn new(interval_period: Duration, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
         Self {
             interval_handle: None,
-            cache: E::Storage::default(),
+            cache: E::ResultFormat::default(),
             interval_period,
             pixmap_addr,
         }
@@ -45,7 +47,7 @@ impl<P, E> Actor for AutoEncoder<P, E>
 where
     P: Pixmap + Unpin + 'static,
     E: Encoder + 'static,
-    <E as Encoder>::Storage: Unpin + 'static,
+    <E as Encoder>::ResultFormat: Unpin + 'static,
 {
     type Context = Context<Self>;
 
@@ -77,7 +79,7 @@ impl<P, E> Handler<TriggerEncodingMsg> for AutoEncoder<P, E>
 where
     P: Pixmap + Unpin + 'static,
     E: Encoder + 'static,
-    <E as Encoder>::Storage: Unpin + 'static,
+    <E as Encoder>::ResultFormat: Unpin + 'static,
 {
     type Result = ResponseActFuture<Self, ()>;
 
@@ -108,9 +110,9 @@ impl<P, E> Handler<GetEncodedDataMsg<E>> for AutoEncoder<P, E>
 where
     P: Pixmap + Unpin + 'static,
     E: Encoder + 'static,
-    <E as Encoder>::Storage: MessageResponse<Self, GetEncodedDataMsg<E>> + Unpin + 'static,
+    <E as Encoder>::ResultFormat: MessageResponse<Self, GetEncodedDataMsg<E>> + Unpin + 'static,
 {
-    type Result = E::Storage;
+    type Result = E::ResultFormat;
 
     fn handle(&mut self, _msg: GetEncodedDataMsg<E>, _ctx: &mut Self::Context) -> Self::Result {
         self.cache.clone()

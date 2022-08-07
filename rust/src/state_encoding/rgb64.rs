@@ -9,13 +9,15 @@ use anyhow::Result;
 use crate::pixmap::Color;
 use crate::state_encoding::Encoder;
 
+/// An encoder that implements *rgb64* encoding.
+/// See module level documentation for more details.
 #[derive(Debug, Copy, Clone)]
 pub struct Rgb64Encoder {}
 
 impl Encoder for Rgb64Encoder {
-    type Storage = String;
+    type ResultFormat = String;
 
-    fn encode(pixmap_width: usize, pixmap_height: usize, pixmap_data: &[Color]) -> Self::Storage {
+    fn encode(pixmap_width: usize, pixmap_height: usize, pixmap_data: &[Color]) -> Self::ResultFormat {
         let mut result_data = Vec::with_capacity(pixmap_width * pixmap_height * 3);
 
         for i in pixmap_data {
@@ -29,7 +31,7 @@ impl Encoder for Rgb64Encoder {
         base64::encode(&result_data)
     }
 
-    fn decode(data: &Self::Storage) -> Result<Vec<Color>> {
+    fn decode(data: &Self::ResultFormat) -> Result<Vec<Color>> {
         let mut result = Vec::new();
 
         let mut color = [0u8; 3];

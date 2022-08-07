@@ -1,3 +1,5 @@
+//! WebSocket server functionality
+
 mod ws_connection;
 mod ws_options;
 mod ws_server;

@@ -1,19 +1,21 @@
 //!
 //! Each pixel is encoded into 4 bytes for the color channels red, green, blue and alpha whereby alpha is always 255.
-// These bytes are then simply appended to each other in row-major order.
-// At the end everything is base64 encoded.
+//! These bytes are then simply appended to each other in row-major order.
+//! At the end everything is base64 encoded.
 //!
 
 use super::Encoder;
 use crate::pixmap::Color;
 
-#[derive(Debug, Clone)]
+/// An encoder that implements *rgba64* encoding.
+/// See module level documentation for more details.
+#[derive(Debug, Copy, Clone)]
 pub struct Rgba64Encoder {}
 
 impl Encoder for Rgba64Encoder {
-    type Storage = String;
+    type ResultFormat = String;
 
-    fn encode(pixmap_width: usize, pixmap_height: usize, pixmap_data: &[Color]) -> Self::Storage {
+    fn encode(pixmap_width: usize, pixmap_height: usize, pixmap_data: &[Color]) -> Self::ResultFormat {
         let mut result_data = Vec::with_capacity(pixmap_width * pixmap_height * 4);
 
         for i in pixmap_data {
@@ -28,7 +30,7 @@ impl Encoder for Rgba64Encoder {
         base64::encode(&result_data)
     }
 
-    fn decode(_data: &Self::Storage) -> anyhow::Result<Vec<Color>> {
+    fn decode(_data: &Self::ResultFormat) -> anyhow::Result<Vec<Color>> {
         todo!()
     }
 }

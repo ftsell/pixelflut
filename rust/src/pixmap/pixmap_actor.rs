@@ -1,8 +1,11 @@
+//! Implementation of an actor that hosts a pixmap as well as Message definitions
+
 use crate::pixmap::{Color, Pixmap};
 use actix::prelude::*;
 use anyhow::Result;
 
 /// An actor that manages a [`Pixmap`] and synchronizes access to it
+#[derive(Debug, Clone)]
 pub struct PixmapActor<P: Pixmap> {
     pixmap: P,
 }
@@ -59,31 +62,42 @@ impl<P: Pixmap + Unpin + 'static> Handler<PutRawDataMsg> for PixmapActor<P> {
     }
 }
 
+/// A message to query a certain pixel from the pixmap
 #[derive(Debug, Copy, Clone, Message)]
 #[rtype(result = "Result<Color>")]
 pub struct GetPixelMsg {
+    /// X coordinate of the queried pixel
     pub x: usize,
+    /// Y coordinate of the queried pixel
     pub y: usize,
 }
 
+/// A message to set a certain pixel to a certain color
 #[derive(Debug, Copy, Clone, Message)]
 #[rtype(result = "Result<()>")]
 pub struct SetPixelMsg {
+    /// X coordinate of the target pixel
     pub x: usize,
+    /// Y coordinate of the target pixel
     pub y: usize,
+    /// Color which the target pixel should be set to
     pub color: Color,
 }
 
+/// A message to query the size of the pixmap as a  *width, height* tuple
 #[derive(Debug, Copy, Clone, Message)]
 #[rtype(result = "Result<(usize, usize)>")]
 pub struct GetSizeMsg {}
 
+/// A message to query the completely dumped color data of a pixmap
 #[derive(Debug, Copy, Clone, Message)]
 #[rtype(result = "Result<Vec<Color>>")]
 pub struct GetRawDataMsg {}
 
+/// A message to overwrite the complete color data of a pixmap
 #[derive(Debug, Clone, Message)]
 #[rtype(result = "Result<()>")]
 pub struct PutRawDataMsg {
+    /// The color data with which the pixmap should be overwritten
     pub data: Vec<Color>,
 }

@@ -3,21 +3,28 @@ use actix::prelude::*;
 use anyhow::Result;
 use std::marker::PhantomData;
 
+/// An encoder can [`encode`](Encoder::encode()) and [`decode`](Encoder::decode()) pixmap data in a certain
+/// format
 pub trait Encoder {
-    type Storage: AsRef<[u8]> + Default + Clone;
+    /// The type which the encoder outputs after it encodes the pixmap and which it can decode again
+    type ResultFormat: AsRef<[u8]> + Default + Clone;
 
-    fn encode(pixmap_width: usize, pixmap_height: usize, pixmap_data: &[Color]) -> Self::Storage;
+    /// Encode the given *pixmap_data* in this encoders format
+    fn encode(pixmap_width: usize, pixmap_height: usize, pixmap_data: &[Color]) -> Self::ResultFormat;
 
-    fn decode(data: &Self::Storage) -> Result<Vec<Color>>;
+    /// Decode the given *data* back into colors
+    fn decode(data: &Self::ResultFormat) -> Result<Vec<Color>>;
 }
 
+/// A message which queries encoded data from something
 #[derive(Debug, Copy, Clone, Message)]
-#[rtype(result = "E::Storage")]
+#[rtype(result = "E::ResultFormat")]
 pub struct GetEncodedDataMsg<E: Encoder + 'static> {
     _phantom: PhantomData<E>,
 }
 
 impl<E: Encoder + 'static> GetEncodedDataMsg<E> {
+    /// Create a new GetEncodedDataMsg
     pub fn new() -> Self {
         Self {
             _phantom: PhantomData::default(),

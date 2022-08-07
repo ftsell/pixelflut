@@ -20,10 +20,12 @@ impl MultiEncodersClient {
         }
     }
 
+    /// Retrieve *rgb64* encoded data
     pub async fn get_rgb64_data(&self) -> String {
         self.rgb64_addr.send(GetEncodedDataMsg::new()).await.unwrap()
     }
 
+    /// Retrieve *rgba64* encoded data
     pub async fn get_rgba64_data(&self) -> String {
         self.rgba64_addr.send(GetEncodedDataMsg::new()).await.unwrap()
     }

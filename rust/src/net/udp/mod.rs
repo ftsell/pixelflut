@@ -1,3 +1,5 @@
+//! UDP server functionality
+
 mod udp_options;
 mod udp_server;
 

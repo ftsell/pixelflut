@@ -1,3 +1,5 @@
+//! TCP server functionality
+
 mod tcp_connection;
 mod tcp_options;
 mod tcp_server;
