@@ -1,6 +1,7 @@
-use crate::differential_state::Tracker;
+use super::Tracker;
 use actix::prelude::*;
-use pixelflut::pixmap::Color;
+use anyhow::Result;
+use pixelflut::pixmap::pixmap_actor::SetPixelMsg;
 
 pub struct TrackerActor {
     tracker: Tracker,
@@ -24,19 +25,11 @@ impl Supervised for TrackerActor {
     }
 }
 
-impl Handler<PixelChanged> for TrackerActor {
-    type Result = ();
+impl Handler<SetPixelMsg> for TrackerActor {
+    type Result = Result<()>;
 
-    fn handle(&mut self, msg: PixelChanged, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: SetPixelMsg, _ctx: &mut Self::Context) -> Self::Result {
         self.tracker.add(msg.x, msg.y, msg.color);
-        ()
+        Ok(())
     }
-}
-
-#[derive(Debug, Copy, Clone, Message)]
-#[rtype(result = "()")]
-struct PixelChanged {
-    x: usize,
-    y: usize,
-    color: Color,
 }

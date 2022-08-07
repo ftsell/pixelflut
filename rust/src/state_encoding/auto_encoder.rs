@@ -68,7 +68,6 @@ where
                 interval.tick().await;
                 self_addr.send(TriggerEncodingMsg {}).await.unwrap();
             }
-            ()
         }));
 
         self.interval_handle = Some(handle);

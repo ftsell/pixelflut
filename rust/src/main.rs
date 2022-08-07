@@ -8,6 +8,7 @@ use std::time::Duration;
 use clap::value_t_or_exit;
 use pretty_env_logger;
 
+use crate::differential_state::TrackerActor;
 use pixelflut;
 use pixelflut::net::tcp::{TcpOptions, TcpServer};
 use pixelflut::net::udp::{UdpOptions, UdpServer};
@@ -94,7 +95,9 @@ async fn start_server(
     // create final pixmap instance which automatically saves data into file
     // let pixmap =
     //     pixelflut::pixmap::ReplicatingPixmap::new(primary_pixmap, vec![Box::new(file_pixmap)], 0.2).unwrap();
-    let pixmap_addr = PixmapActor::new(primary_pixmap).start();
+
+    let tracker = TrackerActor::new(width, height).start();
+    let pixmap_addr = PixmapActor::new(primary_pixmap, Some(tracker.recipient())).start();
 
     // start AutoEncoders for the pixmap
     let rgb64_encoder: Addr<AutoEncoder<_, Rgb64Encoder>> =

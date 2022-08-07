@@ -1,6 +1,7 @@
 //! Implementation of an actor that hosts a pixmap as well as Message definitions
 
 use crate::pixmap::{Color, Pixmap};
+use actix::fut::wrap_future;
 use actix::prelude::*;
 use anyhow::Result;
 use std::any::type_name;
@@ -9,18 +10,26 @@ use std::any::type_name;
 #[derive(Debug, Clone)]
 pub struct PixmapActor<P: Pixmap> {
     pixmap: P,
+    tracker_addr: Option<Recipient<SetPixelMsg>>,
 }
 
 impl<P: Pixmap> PixmapActor<P> {
-    /// Create a new PixmapActor that is backed by the given pixmap
-    pub fn new(pixmap: P) -> Self {
-        Self { pixmap }
+    /// Create a new PixmapActor that is backed by the given pixmap.
+    ///
+    /// Optionally, *tracker_addr* can be given to another actor that keeps track of the most recent pixmap
+    /// changes.
+    /// It will automatically be notified when a pixel on this pixmap changes.
+    pub fn new(pixmap: P, tracker_addr: Option<Recipient<SetPixelMsg>>) -> Self {
+        Self { pixmap, tracker_addr }
     }
 }
 
 impl<P: Pixmap + Default> Default for PixmapActor<P> {
     fn default() -> Self {
-        Self { pixmap: P::default() }
+        Self {
+            pixmap: P::default(),
+            tracker_addr: None,
+        }
     }
 }
 
@@ -45,7 +54,16 @@ impl<P: Pixmap + Unpin + 'static> Handler<GetPixelMsg> for PixmapActor<P> {
 impl<P: Pixmap + Unpin + 'static> Handler<SetPixelMsg> for PixmapActor<P> {
     type Result = Result<()>;
 
-    fn handle(&mut self, msg: SetPixelMsg, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: SetPixelMsg, ctx: &mut Self::Context) -> Self::Result {
+        // notify tracker about change in background
+        if let Some(tracker_addr) = &self.tracker_addr {
+            let tracker_addr = tracker_addr.clone();
+            ctx.spawn(wrap_future(async move {
+                tracker_addr.send(msg).await.unwrap().unwrap();
+                ()
+            }));
+        }
+
         self.pixmap.set_pixel(msg.x, msg.y, msg.color)
     }
 }

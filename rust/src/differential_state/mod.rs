@@ -7,3 +7,4 @@ mod tracker;
 mod tracker_actor;
 
 pub use tracker::Tracker;
+pub use tracker_actor::TrackerActor;
