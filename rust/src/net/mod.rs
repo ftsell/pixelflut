@@ -11,8 +11,8 @@ use bytes::{Buf, Bytes};
 use crate::net::framing::Frame;
 use crate::pixmap::pixmap_actor::{GetPixelMsg, GetSizeMsg, PixmapActor, SetPixelMsg};
 use crate::pixmap::Pixmap;
-use crate::protocol::{Request, Response};
-use crate::state_encoding::DefaultMultiEncodersClient;
+use crate::protocol::{Request, Response, StateEncodingAlgorithm};
+use crate::state_encoding::MultiEncodersClient;
 
 pub mod framing;
 // pub mod udp_server;
@@ -21,7 +21,11 @@ pub mod udp;
 pub mod ws;
 
 /// handle a request frame and return a response frame
-async fn handle_frame<P, B>(input: Frame<B>, pixmap_addr: &Addr<PixmapActor<P>>) -> Option<Frame<Bytes>>
+async fn handle_frame<P, B>(
+    input: Frame<B>,
+    pixmap_addr: &Addr<PixmapActor<P>>,
+    enc_client: &MultiEncodersClient,
+) -> Option<Frame<Bytes>>
 where
     P: Pixmap + Unpin + 'static,
     B: Buf,
@@ -29,7 +33,7 @@ where
     // try parse the received frame as request
     match Request::try_from(input) {
         Err(e) => Some(Frame::new_from_string(e.to_string())),
-        Ok(request) => match handle_request(request, pixmap_addr).await {
+        Ok(request) => match handle_request(request, pixmap_addr, enc_client).await {
             Err(e) => Some(Frame::new_from_string(e.to_string())),
             Ok(response) => response.map(|r| r.into()),
         },
@@ -37,7 +41,11 @@ where
 }
 
 /// handle a request and return a response
-async fn handle_request<P>(request: Request, pixmap_addr: &Addr<PixmapActor<P>>) -> Result<Option<Response>>
+async fn handle_request<P>(
+    request: Request,
+    pixmap_addr: &Addr<PixmapActor<P>>,
+    enc_client: &MultiEncodersClient,
+) -> Result<Option<Response>>
 where
     P: Pixmap + Unpin + 'static,
 {
@@ -61,17 +69,16 @@ where
                 .await??;
             Ok(None)
         }
-        // Request::State(algorithm) => match algorithm {
-        //     StateEncodingAlgorithm::Rgb64 => Ok(Some(Response::State(
-        //         algorithm,
-        //         encodings.rgb64.lock().unwrap().clone(),
-        //     ))),
-        //     StateEncodingAlgorithm::Rgba64 => Ok(Some(Response::State(
-        //         algorithm,
-        //         encodings.rgba64.lock().unwrap().clone(),
-        //     ))),
-        // },
-        _ => todo!("Re-implement encodings"),
+        Request::State(algorithm) => match algorithm {
+            StateEncodingAlgorithm::Rgb64 => Ok(Some(Response::State(
+                algorithm,
+                enc_client.get_rgb64_data().await,
+            ))),
+            StateEncodingAlgorithm::Rgba64 => Ok(Some(Response::State(
+                algorithm,
+                enc_client.get_rgba64_data().await,
+            ))),
+        },
     }
 }
 

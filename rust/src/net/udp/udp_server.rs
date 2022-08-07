@@ -2,6 +2,7 @@ use crate::net::framing::Frame;
 use crate::net::udp::UdpOptions;
 use crate::pixmap::pixmap_actor::PixmapActor;
 use crate::pixmap::Pixmap;
+use crate::state_encoding::MultiEncodersClient;
 use actix::fut::wrap_future;
 use actix::prelude::*;
 use bytes::{Buf, BytesMut};
@@ -21,40 +22,52 @@ use tokio::net::UdpSocket;
 pub struct UdpServer<P: Pixmap + Unpin + 'static> {
     options: UdpOptions,
     pixmap_addr: Addr<PixmapActor<P>>,
+    enc_client: MultiEncodersClient,
     server_task: Option<SpawnHandle>,
 }
 
 impl<P: Pixmap + Unpin + 'static> UdpServer<P> {
     /// Create a new UDP Server
-    pub fn new(options: UdpOptions, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
+    pub fn new(
+        options: UdpOptions,
+        pixmap_addr: Addr<PixmapActor<P>>,
+        enc_client: MultiEncodersClient,
+    ) -> Self {
         Self {
             server_task: None,
             options,
             pixmap_addr,
+            enc_client,
         }
     }
 
     /// Listen on the udp port defined through *options* while using the given *pixmap* and *encodings*
     /// as backing data storage
-    pub async fn listen(options: UdpOptions, pixmap_addr: Addr<PixmapActor<P>>) -> tokio::io::Result<()> {
+    pub async fn listen(
+        options: UdpOptions,
+        pixmap_addr: Addr<PixmapActor<P>>,
+        enc_client: MultiEncodersClient,
+    ) -> tokio::io::Result<()> {
         let socket = Arc::new(UdpSocket::bind(options.listen_address).await?);
         info!("Started udp listener on {}", socket.local_addr().unwrap());
 
         loop {
             let pixmap_addr = pixmap_addr.clone();
+            let enc_client = enc_client.clone();
             let socket = socket.clone();
             let mut buffer = BytesMut::with_capacity(1024);
 
             let res = socket.recv_from(&mut buffer[..]).await;
             let (_num_read, origin) = res?;
 
-            UdpServer::process_received(pixmap_addr, buffer, origin, socket).await;
+            UdpServer::process_received(pixmap_addr, enc_client, buffer, origin, socket).await;
         }
     }
 
     /// Process a received chunk of data and send the response back to where it came from
     async fn process_received<B: Buf + Clone>(
         pixmap_addr: Addr<PixmapActor<P>>,
+        enc_client: MultiEncodersClient,
         mut buffer: B,
         origin: SocketAddr,
         socket: Arc<UdpSocket>,
@@ -67,7 +80,7 @@ impl<P: Pixmap + Unpin + 'static> UdpServer<P> {
                     buffer.advance(length);
 
                     // handle the frame
-                    match crate::net::handle_frame(frame, &pixmap_addr).await {
+                    match crate::net::handle_frame(frame, &pixmap_addr, &enc_client).await {
                         None => {}
                         Some(response) => {
                             // send back a response
@@ -98,7 +111,7 @@ impl<P: Pixmap + Unpin + 'static> Actor for UdpServer<P> {
         }
 
         // spawn a future on this actors context which opens the udp socket and listens for incoming datagrams
-        let do_listen = Self::listen(self.options, self.pixmap_addr.clone());
+        let do_listen = Self::listen(self.options, self.pixmap_addr.clone(), self.enc_client.clone());
         let handle = ctx.spawn(wrap_future(async move {
             do_listen.await.unwrap();
             ()

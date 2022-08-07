@@ -11,6 +11,7 @@ use tokio::net::TcpListener;
 use super::{TcpConnection, TcpOptions};
 use crate::pixmap::pixmap_actor::PixmapActor;
 use crate::pixmap::Pixmap;
+use crate::state_encoding::MultiEncodersClient;
 
 /// A TcpServer listens on a certain port using TCP and serves as a Pixelflut server for clients that connect
 /// to it.
@@ -30,23 +31,37 @@ use crate::pixmap::Pixmap;
 pub struct TcpServer<P: Pixmap + Unpin + 'static> {
     options: TcpOptions,
     pixmap_addr: Addr<PixmapActor<P>>,
+    enc_client: MultiEncodersClient,
 }
 
 impl<P: Pixmap + Unpin + 'static> TcpServer<P> {
     /// Create a new TcpServer
-    pub fn new(options: TcpOptions, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
-        Self { options, pixmap_addr }
+    pub fn new(
+        options: TcpOptions,
+        pixmap_addr: Addr<PixmapActor<P>>,
+        enc_client: MultiEncodersClient,
+    ) -> Self {
+        Self {
+            options,
+            pixmap_addr,
+            enc_client,
+        }
     }
 
     /// Listen on the tcp port defined through *options* while using the given *pixmap* and *encodings*
     /// as backing data storage
-    async fn listen(self_addr: Addr<Self>, options: TcpOptions, pixmap_addr: Addr<PixmapActor<P>>) {
+    async fn listen(
+        self_addr: Addr<Self>,
+        options: TcpOptions,
+        pixmap_addr: Addr<PixmapActor<P>>,
+        enc_client: MultiEncodersClient,
+    ) {
         let listener = TcpListener::bind(options.listen_address).await.unwrap();
         log::info!("Started tcp server on {}", listener.local_addr().unwrap());
 
         loop {
             let (socket, _) = listener.accept().await.unwrap();
-            let connection = TcpConnection::new(socket, pixmap_addr.clone());
+            let connection = TcpConnection::new(socket, pixmap_addr.clone(), enc_client.clone());
             self_addr.send(ClientConnectedMsg { connection }).await.unwrap();
         }
     }
@@ -60,6 +75,7 @@ impl<P: Pixmap + Unpin + 'static> Actor for TcpServer<P> {
             ctx.address(),
             self.options,
             self.pixmap_addr.clone(),
+            self.enc_client.clone(),
         )));
     }
 }

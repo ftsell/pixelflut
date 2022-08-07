@@ -1,6 +1,7 @@
 use crate::net::framing::Frame;
 use crate::pixmap::pixmap_actor::PixmapActor;
 use crate::pixmap::Pixmap;
+use crate::state_encoding::MultiEncodersClient;
 use actix::prelude::*;
 use anyhow::Error;
 use bytes::buf::Take;
@@ -9,16 +10,22 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 pub(crate) struct TcpConnection<P: Pixmap + Unpin + 'static> {
-    stream: TcpStream,
     pixmap_addr: Addr<PixmapActor<P>>,
+    enc_client: MultiEncodersClient,
+    stream: TcpStream,
     read_buffer: BytesMut,
 }
 
 impl<P: Pixmap + Unpin + 'static> TcpConnection<P> {
-    pub fn new(stream: TcpStream, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
+    pub fn new(
+        stream: TcpStream,
+        pixmap_addr: Addr<PixmapActor<P>>,
+        enc_client: MultiEncodersClient,
+    ) -> Self {
         Self {
             stream,
             pixmap_addr,
+            enc_client,
             read_buffer: BytesMut::with_capacity(256),
         }
     }
@@ -37,7 +44,7 @@ impl<P: Pixmap + Unpin + 'static> TcpConnection<P> {
                 }
                 Ok(frame) => {
                     // handle the frame
-                    match crate::net::handle_frame(frame, &self.pixmap_addr).await {
+                    match crate::net::handle_frame(frame, &self.pixmap_addr, &self.enc_client).await {
                         None => {}
                         Some(response) => {
                             // send back a response

@@ -7,6 +7,7 @@
 use super::Encoder;
 use crate::pixmap::Color;
 
+#[derive(Debug, Clone)]
 pub struct Rgba64Encoder {}
 
 impl Encoder for Rgba64Encoder {

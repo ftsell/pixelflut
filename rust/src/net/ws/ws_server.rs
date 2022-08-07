@@ -13,6 +13,7 @@ use tokio::net::TcpListener;
 use super::{WsConnection, WsOptions};
 use crate::pixmap::pixmap_actor::PixmapActor;
 use crate::pixmap::Pixmap;
+use crate::state_encoding::MultiEncodersClient;
 
 /// A WebSocket server accepts incoming connections, upgrades the protocol to WebSocket and then handles
 /// Pixelflut messages that are transmitted via the WebSocket connection
@@ -20,17 +21,31 @@ use crate::pixmap::Pixmap;
 pub struct WsServer<P: Pixmap + Unpin + 'static> {
     options: WsOptions,
     pixmap_addr: Addr<PixmapActor<P>>,
+    enc_client: MultiEncodersClient,
 }
 
 impl<P: Pixmap + Unpin + 'static> WsServer<P> {
     /// Create a new WebSocket server with the given parameters
-    pub fn new(options: WsOptions, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
-        Self { options, pixmap_addr }
+    pub fn new(
+        options: WsOptions,
+        pixmap_addr: Addr<PixmapActor<P>>,
+        enc_client: MultiEncodersClient,
+    ) -> Self {
+        Self {
+            options,
+            pixmap_addr,
+            enc_client,
+        }
     }
 
     /// Listen on the tpc port defined through *options* while using the given *pixmap* and *encodings*
     /// as backing data storage
-    pub async fn listen(self_addr: Addr<Self>, options: WsOptions, pixmap_addr: Addr<PixmapActor<P>>) {
+    pub async fn listen(
+        self_addr: Addr<Self>,
+        options: WsOptions,
+        pixmap_addr: Addr<PixmapActor<P>>,
+        enc_client: MultiEncodersClient,
+    ) {
         let listener = TcpListener::bind(options.listen_address).await.unwrap();
         info!("Started websocket listener on {}", listener.local_addr().unwrap());
 
@@ -38,7 +53,7 @@ impl<P: Pixmap + Unpin + 'static> WsServer<P> {
             let res = listener.accept().await;
             let (socket, _) = res.unwrap();
 
-            let connection = WsConnection::new(socket, pixmap_addr.clone());
+            let connection = WsConnection::new(socket, pixmap_addr.clone(), enc_client.clone());
             self_addr.send(ClientConnectedMsg { connection }).await.unwrap();
         }
     }
@@ -52,6 +67,7 @@ impl<P: Pixmap + Unpin + 'static> Actor for WsServer<P> {
             ctx.address(),
             self.options,
             self.pixmap_addr.clone(),
+            self.enc_client.clone(),
         )));
     }
 }

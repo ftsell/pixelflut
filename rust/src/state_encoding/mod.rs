@@ -15,6 +15,6 @@ mod rgba64;
 
 pub use auto_encoder::AutoEncoder;
 pub use encodings::{Encoder, GetEncodedDataMsg};
-pub use multi_encoders_client::{DefaultMultiEncodersClient, MultiEncodersClient};
+pub use multi_encoders_client::MultiEncodersClient;
 pub use rgb64::Rgb64Encoder;
 pub use rgba64::Rgba64Encoder;

@@ -1,6 +1,7 @@
 use crate::net::framing::Frame;
 use crate::pixmap::pixmap_actor::PixmapActor;
 use crate::pixmap::Pixmap;
+use crate::state_encoding::MultiEncodersClient;
 use actix::prelude::*;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
@@ -9,13 +10,19 @@ use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 pub(crate) struct WsConnection<P: Pixmap + Unpin + 'static> {
     uninit_connection: Option<TcpStream>,
     pixmap_addr: Addr<PixmapActor<P>>,
+    enc_client: MultiEncodersClient,
 }
 
 impl<P: Pixmap + Unpin + 'static> WsConnection<P> {
-    pub fn new(connection: TcpStream, pixmap_addr: Addr<PixmapActor<P>>) -> Self {
+    pub fn new(
+        connection: TcpStream,
+        pixmap_addr: Addr<PixmapActor<P>>,
+        enc_client: MultiEncodersClient,
+    ) -> Self {
         Self {
             uninit_connection: Some(connection),
             pixmap_addr,
+            enc_client,
         }
     }
 
@@ -49,7 +56,7 @@ impl<P: Pixmap + Unpin + 'static> WsConnection<P> {
                     let frame = Frame::new_from_string(msg);
 
                     // TODO improve by not sending empty responses
-                    match crate::net::handle_frame(frame, &self.pixmap_addr).await {
+                    match crate::net::handle_frame(frame, &self.pixmap_addr, &self.enc_client).await {
                         None => Ok(Message::Text(String::new())),
                         Some(response) => Ok(Message::Text(response.try_into().unwrap())),
                     }
