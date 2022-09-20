@@ -22,6 +22,8 @@ pub enum Response {
     Size(usize, usize),
     Px(usize, usize, Color),
     State(StateEncodingAlgorithm, String),
+    SubscriptionActivated,
+    SubscriptionDeactivated,
 }
 
 impl FromStr for Response {
@@ -51,6 +53,8 @@ impl Display for Response {
             Response::Size(width, height) => f.write_fmt(format_args!("SIZE {} {}", width, height)),
             Response::Px(x, y, color) => f.write_fmt(format_args!("PX {} {} #{:X}", x, y, color)),
             Response::State(alg, data) => f.write_fmt(format_args!("STATE {} {}", alg, data)),
+            Response::SubscriptionActivated => f.write_str("SUBSCRIBED"),
+            Response::SubscriptionDeactivated => f.write_str("UNSUBSCRIBED"),
         }
     }
 }

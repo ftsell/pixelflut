@@ -1,11 +1,12 @@
 //! The main [`Tracker`] type and its implementation
 
+use crate::pixmap::Color;
 use nohash_hasher::BuildNoHashHasher;
-use pixelflut::pixmap::Color;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
 /// A type that keeps track of the most recent pixmap update of each pixel
+#[derive(Debug, Clone)]
 pub struct Tracker {
     /// The size of the pixmap in which this change occurred
     pixmap_size: (usize, usize),
@@ -50,7 +51,7 @@ impl Tracker {
 }
 
 /// A change to a certain pixel inside a certain pixmap that can be tracked using a [`Tracker`]
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct TrackedChange {
     /// The index of the changed pixel inside the pixmap
     pixmap_index: usize,

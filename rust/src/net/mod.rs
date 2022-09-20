@@ -20,11 +20,25 @@ pub mod tcp;
 pub mod udp;
 pub mod ws;
 
+/// Preferences which the client has chosen for their connection
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct ConnectionPreferences {
+    /// Whether the client wishes to be subscribed to pixmap updates
+    subscribed: bool,
+}
+
+impl Default for ConnectionPreferences {
+    fn default() -> Self {
+        Self { subscribed: false }
+    }
+}
+
 /// handle a request frame and return a response frame
 async fn handle_frame<P, B>(
     input: Frame<B>,
     pixmap_addr: &Addr<PixmapActor<P>>,
     enc_client: &MultiEncodersClient,
+    connection_prefs: &mut ConnectionPreferences,
 ) -> Option<Frame<Bytes>>
 where
     P: Pixmap + Unpin + 'static,
@@ -33,7 +47,7 @@ where
     // try parse the received frame as request
     match Request::try_from(input) {
         Err(e) => Some(Frame::new_from_string(e.to_string())),
-        Ok(request) => match handle_request(request, pixmap_addr, enc_client).await {
+        Ok(request) => match handle_request(request, pixmap_addr, enc_client, connection_prefs).await {
             Err(e) => Some(Frame::new_from_string(e.to_string())),
             Ok(response) => response.map(|r| r.into()),
         },
@@ -45,6 +59,7 @@ async fn handle_request<P>(
     request: Request,
     pixmap_addr: &Addr<PixmapActor<P>>,
     enc_client: &MultiEncodersClient,
+    connection_prefs: &mut ConnectionPreferences,
 ) -> Result<Option<Response>>
 where
     P: Pixmap + Unpin + 'static,
@@ -79,6 +94,14 @@ where
                 enc_client.get_rgba64_data().await,
             ))),
         },
+        Request::Subscribe => {
+            connection_prefs.subscribed = true;
+            Ok(None)
+        }
+        Request::Unsubscribe => {
+            connection_prefs.subscribed = false;
+            Ok(None)
+        }
     }
 }
 

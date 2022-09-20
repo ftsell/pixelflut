@@ -21,6 +21,8 @@ pub enum Request {
     PxGet(usize, usize),
     PxSet(usize, usize, Color),
     State(StateEncodingAlgorithm),
+    Subscribe,
+    Unsubscribe,
 }
 
 impl FromStr for Request {
@@ -51,6 +53,8 @@ impl Display for Request {
             Request::PxGet(x, y) => f.write_fmt(format_args!("PX {} {}", x, y)),
             Request::PxSet(x, y, color) => f.write_fmt(format_args!("PX {} {} #{:X}", x, y, color)),
             Request::State(alg) => f.write_fmt(format_args!("STATE {}", alg)),
+            Request::Subscribe => f.write_str("SUBSCRIBE"),
+            Request::Unsubscribe => f.write_str("UNSUBSCRIBE"),
         }
     }
 }

@@ -1,12 +1,14 @@
 use super::Tracker;
+use crate::pixmap::pixmap_actor::SetPixelMsg;
 use actix::dev::{MessageResponse, OneshotSender};
 use actix::fut::wrap_future;
 use actix::prelude::*;
 use anyhow::Result;
-use pixelflut::pixmap::pixmap_actor::SetPixelMsg;
 use std::time::Duration;
 use tokio::sync::watch;
 
+/// Actor wrapper for [`Tracker`]s
+#[derive(Debug)]
 pub struct TrackerActor {
     tracker: Tracker,
     trigger_period: Duration,
@@ -15,12 +17,13 @@ pub struct TrackerActor {
 }
 
 impl TrackerActor {
+    /// Crate a new TrackerActor that can track changes of pixmaps of the given dimensions
     pub fn new(pixmap_width: usize, pixmap_height: usize) -> Self {
         Self {
             tracker: Tracker::new(pixmap_width, pixmap_height),
             trigger_task: None,
             publisher: watch::channel(Vec::new()).0,
-            trigger_period: Duration::from_millis(1000),
+            trigger_period: Duration::from_millis(100),
         }
     }
 }

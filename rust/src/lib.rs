@@ -23,6 +23,7 @@ extern crate log;
 #[macro_use]
 extern crate quickcheck;
 
+pub mod differential_state;
 mod i18n;
 pub mod net;
 pub mod pixmap;

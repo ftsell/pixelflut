@@ -1,6 +1,5 @@
 use actix::prelude::*;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::process::exit;
 use std::str::FromStr;
 use std::time::Duration;
@@ -8,17 +7,15 @@ use std::time::Duration;
 use clap::value_t_or_exit;
 use pretty_env_logger;
 
-use crate::differential_state::TrackerActor;
 use pixelflut;
+use pixelflut::differential_state::TrackerActor;
 use pixelflut::net::tcp::{TcpOptions, TcpServer};
 use pixelflut::net::udp::{UdpOptions, UdpServer};
 use pixelflut::net::ws::{WsOptions, WsServer};
 use pixelflut::pixmap::pixmap_actor::PixmapActor;
-use pixelflut::pixmap::Pixmap;
 use pixelflut::state_encoding::{AutoEncoder, MultiEncodersClient, Rgb64Encoder, Rgba64Encoder};
 
 mod cli;
-mod differential_state;
 #[cfg(feature = "gui")]
 mod gui;
 
@@ -97,7 +94,7 @@ async fn start_server(
     //     pixelflut::pixmap::ReplicatingPixmap::new(primary_pixmap, vec![Box::new(file_pixmap)], 0.2).unwrap();
 
     let tracker = TrackerActor::new(width, height).start();
-    let pixmap_addr = PixmapActor::new(primary_pixmap, Some(tracker.recipient())).start();
+    let pixmap_addr = PixmapActor::new(primary_pixmap, Some(tracker.clone().recipient())).start();
 
     // start AutoEncoders for the pixmap
     let rgb64_encoder: Addr<AutoEncoder<_, Rgb64Encoder>> =
@@ -114,6 +111,7 @@ async fn start_server(
             },
             pixmap_addr.clone(),
             enc_client.clone(),
+            tracker.clone(),
         )
         .start()
     });

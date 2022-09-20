@@ -1,5 +1,6 @@
 use crate::net::framing::Frame;
 use crate::net::udp::UdpOptions;
+use crate::net::ConnectionPreferences;
 use crate::pixmap::pixmap_actor::PixmapActor;
 use crate::pixmap::Pixmap;
 use crate::state_encoding::MultiEncodersClient;
@@ -80,7 +81,10 @@ impl<P: Pixmap + Unpin + 'static> UdpServer<P> {
                     buffer.advance(length);
 
                     // handle the frame
-                    match crate::net::handle_frame(frame, &pixmap_addr, &enc_client).await {
+                    let mut dummy_preferences = ConnectionPreferences::default();
+                    match crate::net::handle_frame(frame, &pixmap_addr, &enc_client, &mut dummy_preferences)
+                        .await
+                    {
                         None => {}
                         Some(response) => {
                             // send back a response

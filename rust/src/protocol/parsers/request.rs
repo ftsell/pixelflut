@@ -53,5 +53,9 @@ pub fn parse(input: &str) -> IResult<&str, Request, Error> {
                 },
             )),
         ),
+        // SUBSCRIBE
+        value(Request::Subscribe, tag_no_case("subscribe")),
+        // UNSUBSCRIBE
+        value(Request::Unsubscribe, tag_no_case("unsubscribe")),
     ))(input)?)
 }

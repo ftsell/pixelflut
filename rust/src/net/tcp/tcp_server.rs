@@ -5,6 +5,7 @@
 use actix::fut::wrap_future;
 use actix::prelude::*;
 
+use crate::differential_state::TrackerActor;
 use crate::net::ClientConnectedMsg;
 use tokio::net::TcpListener;
 
@@ -31,6 +32,7 @@ use crate::state_encoding::MultiEncodersClient;
 pub struct TcpServer<P: Pixmap + Unpin + 'static> {
     options: TcpOptions,
     pixmap_addr: Addr<PixmapActor<P>>,
+    tracker_addr: Addr<TrackerActor>,
     enc_client: MultiEncodersClient,
 }
 
@@ -40,10 +42,12 @@ impl<P: Pixmap + Unpin + 'static> TcpServer<P> {
         options: TcpOptions,
         pixmap_addr: Addr<PixmapActor<P>>,
         enc_client: MultiEncodersClient,
+        tracker_addr: Addr<TrackerActor>,
     ) -> Self {
         Self {
             options,
             pixmap_addr,
+            tracker_addr,
             enc_client,
         }
     }
@@ -55,13 +59,19 @@ impl<P: Pixmap + Unpin + 'static> TcpServer<P> {
         options: TcpOptions,
         pixmap_addr: Addr<PixmapActor<P>>,
         enc_client: MultiEncodersClient,
+        tracker_addr: Addr<TrackerActor>,
     ) {
         let listener = TcpListener::bind(options.listen_address).await.unwrap();
         log::info!("Started tcp server on {}", listener.local_addr().unwrap());
 
         loop {
             let (socket, _) = listener.accept().await.unwrap();
-            let connection = TcpConnection::new(socket, pixmap_addr.clone(), enc_client.clone());
+            let connection = TcpConnection::new(
+                socket,
+                pixmap_addr.clone(),
+                enc_client.clone(),
+                tracker_addr.clone(),
+            );
             self_addr.send(ClientConnectedMsg { connection }).await.unwrap();
         }
     }
@@ -76,6 +86,7 @@ impl<P: Pixmap + Unpin + 'static> Actor for TcpServer<P> {
             self.options,
             self.pixmap_addr.clone(),
             self.enc_client.clone(),
+            self.tracker_addr.clone(),
         )));
     }
 }

@@ -1,4 +1,5 @@
 use crate::net::framing::Frame;
+use crate::net::ConnectionPreferences;
 use crate::pixmap::pixmap_actor::PixmapActor;
 use crate::pixmap::Pixmap;
 use crate::state_encoding::MultiEncodersClient;
@@ -11,6 +12,7 @@ pub(crate) struct WsConnection<P: Pixmap + Unpin + 'static> {
     uninit_connection: Option<TcpStream>,
     pixmap_addr: Addr<PixmapActor<P>>,
     enc_client: MultiEncodersClient,
+    client_preferences: ConnectionPreferences,
 }
 
 impl<P: Pixmap + Unpin + 'static> WsConnection<P> {
@@ -21,6 +23,7 @@ impl<P: Pixmap + Unpin + 'static> WsConnection<P> {
     ) -> Self {
         Self {
             uninit_connection: Some(connection),
+            client_preferences: ConnectionPreferences::default(),
             pixmap_addr,
             enc_client,
         }
@@ -43,7 +46,7 @@ impl<P: Pixmap + Unpin + 'static> WsConnection<P> {
         }
     }
 
-    async fn process_received(&self, msg: Result<Message, WsError>) -> Result<Message, WsError>
+    async fn process_received(&mut self, msg: Result<Message, WsError>) -> Result<Message, WsError>
     where
         P: Pixmap,
     {
@@ -56,7 +59,14 @@ impl<P: Pixmap + Unpin + 'static> WsConnection<P> {
                     let frame = Frame::new_from_string(msg);
 
                     // TODO improve by not sending empty responses
-                    match crate::net::handle_frame(frame, &self.pixmap_addr, &self.enc_client).await {
+                    match crate::net::handle_frame(
+                        frame,
+                        &self.pixmap_addr,
+                        &self.enc_client,
+                        &mut self.client_preferences,
+                    )
+                    .await
+                    {
                         None => Ok(Message::Text(String::new())),
                         Some(response) => Ok(Message::Text(response.try_into().unwrap())),
                     }
