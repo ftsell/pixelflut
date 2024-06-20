@@ -1,0 +1,17 @@
+# See https://embarkstudios.github.io/cargo-deny/index.html
+# run `cargo deny check` for check execution
+
+# https://embarkstudios.github.io/cargo-deny/checks/licenses/cfg.html
+[licenses]
+unlicensed = "warn"
+allow = []
+# Lint level for licenses considered copyleft
+copyleft = "warn"
+allow-osi-fsf-free = "either"
+default = "deny"
+
+
+# https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
+[bans]
+# Lint level for when multiple versions of the same crate are detected
+multiple-versions = "allow"
